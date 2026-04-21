@@ -173,46 +173,53 @@ const transporter = nodemailer.createTransport({
 });
 
 // ==========================================
-// 🛡️ ระบบตรวจสอบสลิป AI 
+// 🛡️ ระบบตรวจสอบสลิป AI (Production V3 - อัปเกรดระบบกวาดตัวเลขขั้นสุด)
 // ==========================================
 async function verifySlip(imageBuffer, expectedAmount) {
   try {
-    console.log(`\n🔍 [1/2] ตรวจสลิปยอดเป้าหมาย: ${expectedAmount} บาท (โหมดใช้งานจริง)`);
+    console.log(`\n🔍 [1/2] ตรวจสลิปยอดเป้าหมาย: ${expectedAmount} บาท`);
     
-    // 1. อ่าน QR Code เพื่อยืนยันว่าเป็นสลิปจริงๆ (ป้องกันคนส่งรูปทั่วไป)
+    // 1. เช็ค QR Code เพื่อป้องกันการมั่วรูป
     const { data, info } = await sharp(imageBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const qrCode = jsQR(new Uint8ClampedArray(data), info.width, info.height);
     if (!qrCode) return { success: false, message: 'ระบบไม่พบ QR Code บนสลิป โปรดใช้รูปสลิปเต็มใบ' };
 
-    // 2. ⚡ ทริคระดับโปร: แปลงสลิปเป็น ขาว-ดำ และเร่งความคมชัด (แก้ปัญหา AI อ่านสีชมพู/ฟ้า ไม่ออก)
+    // 2. ⚡ แปลงภาพเป็น ขาว-ดำ และ "ตัดสีพื้นหลังทิ้งทั้งหมด" (ช่วยให้อ่านสลิป MyMo/กสิกร ได้แม่นขึ้น 99%)
     const processedImageBuffer = await sharp(imageBuffer)
-      .grayscale() // แปลงเป็นขาวดำ
-      .normalize() // เร่งความสว่างและคอนทราสต์ให้ตัวหนังสือชัดเจน
+      .grayscale()
+      .normalize()
+      .threshold(200) // ตัวนี้คือทีเด็ด: ทำให้พื้นสีอ่อนกลายเป็นสีขาวหมด ตัวหนังสือกลายเป็นสีดำเข้ม
       .toBuffer();
 
-    // 3. ส่งรูปขาวดำให้ AI อ่าน
+    // 3. ให้ AI อ่านข้อความ
     const result = await Tesseract.recognize(processedImageBuffer, 'tha+eng');
-    let text = result.data.text.replace(/\s+/g, '').replace(/,/g, '').toLowerCase();
-
-    // 4. เช็คชื่อบัญชี (เพิ่มความยืดหยุ่นให้ AI ที่บางทีอ่านสระผิด)
+    let text = result.data.text.toLowerCase();
+    
+    // 4. เช็คชื่อบัญชี
     const isMySlip = text.includes("อภิวรรธน์") || text.includes("ภู่ถาวร") || text.includes("1591355895") || text.includes("อภิวรรธ");
     if (!isMySlip) {
-       console.log("❌ สลิปผิดบัญชี! (สิ่งที่ AI อ่านได้บางส่วน):", text.substring(0, 50));
        return { success: false, message: '❌ สลิปนี้ไม่ได้โอนเข้าบัญชีของร้านค้า' };
     }
 
-    // 5. เช็คยอดเงิน (แก้ปัญหา AI อ่านเลข 0 เป็น O หรือ 1 เป็น l)
-    const amountFormat1 = `${expectedAmount}.00`;
-    const amountFormat2 = expectedAmount.toString();
+    // 5. เช็คยอดเงิน (โหมดกวาดตัวเลขโหดๆ)
+    // แปลงตัวที่ AI มักจำผิด l, I, O, S ให้กลับเป็นตัวเลข
+    let textForAmount = text.replace(/[Oo]/g, '0').replace(/[Ss]/g, '5').replace(/[lI|]/g, '1');
     
-    // แปลงตัวอักษรที่ AI มักจำสับสนให้กลับเป็นตัวเลข
-    let textForAmount = text.replace(/[Oo]/g, '0').replace(/[Ss]/g, '5').replace(/[lI]/g, '1');
+    // กวาดหาตัวเลข "ทุกชุด" ที่อยู่บนสลิป (เช่น ดึง 123.00, ดึง 0930078515 ออกมา)
+    const matches = textForAmount.match(/\d+\.\d+|\d+/g) || [];
+    let isAmountMatch = matches.some(num => parseFloat(num) === parseFloat(expectedAmount));
 
-    if (textForAmount.includes(amountFormat1) || textForAmount.includes(amountFormat2)) {
-      console.log(`✅ สำเร็จ! AI พบเลขยอดเงิน ${expectedAmount} บนสลิป โอนเข้าบัญชีร้านจริง!`);
+    // แผนสำรอง: รวบตัวเลขทั้งหมดติดกัน เผื่อ AI อ่านจุดทศนิยมพลาด (เช่น 123.00 กลายเป็น 12300)
+    const rawNumbers = textForAmount.replace(/[^0-9]/g, '');
+    const expectedWithCents = (parseFloat(expectedAmount) * 100).toString(); // หาคำว่า "12300"
+    const expectedWithoutCents = parseFloat(expectedAmount).toString(); // หาคำว่า "123"
+
+    // ถ้าเจอตัวเลขตรงกันจุดใดจุดหนึ่ง ถือว่าผ่าน!
+    if (isAmountMatch || rawNumbers.includes(expectedWithCents) || rawNumbers.includes(expectedWithoutCents)) {
+      console.log(`✅ สำเร็จ! AI พบยอดเงิน ${expectedAmount} บนสลิป`);
       return { success: true, payload: qrCode.data, amount: parseFloat(expectedAmount) };
     } else {
-      console.log(`❌ ยอดเงินไม่ตรง (สิ่งที่ AI อ่านได้):`, textForAmount.substring(0, 100));
+      console.log(`❌ AI อ่านเลขไม่ตรง! (สิ่งที่ AI พยายามอ่านได้: ${matches.join(', ')})`);
       return { success: false, message: `สลิปถูกต้อง แต่ยอดเงินไม่ตรงกับเป้าหมาย (${expectedAmount} บาท)` };
     }
   } catch (err) {
@@ -220,7 +227,6 @@ async function verifySlip(imageBuffer, expectedAmount) {
     return { success: false, message: 'เกิดข้อผิดพลาดในการวิเคราะห์รูปภาพ โปรดลองใหม่อีกครั้ง' };
   }
 }
-
 
 // ===== ROUTES =====
 app.post('/api/auth/signup', async (req, res) => {

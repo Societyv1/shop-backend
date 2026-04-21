@@ -173,49 +173,54 @@ const transporter = nodemailer.createTransport({
 });
 
 // ==========================================
-// 🛡️ ระบบตรวจสอบสลิป AI (อัปเดตให้รองรับได้หลายธนาคารมากขึ้น)
+// 🛡️ ระบบตรวจสอบสลิป AI 
 // ==========================================
 async function verifySlip(imageBuffer, expectedAmount) {
   try {
-    console.log(`\n🔍 [1/2] ตรวจสลิปยอดเป้าหมาย: ${expectedAmount} บาท`);
+    console.log(`\n🔍 [1/2] ตรวจสลิปยอดเป้าหมาย: ${expectedAmount} บาท (โหมดใช้งานจริง)`);
     
-    // 1. เช็คว่ามี QR Code ในสลิปไหม (บังคับต้องมี)
+    // 1. อ่าน QR Code เพื่อยืนยันว่าเป็นสลิปจริงๆ (ป้องกันคนส่งรูปทั่วไป)
     const { data, info } = await sharp(imageBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const qrCode = jsQR(new Uint8ClampedArray(data), info.width, info.height);
-    if (!qrCode) return { success: false, message: 'ระบบไม่พบ QR Code บนสลิป โปรดตรวจสอบรูปภาพ' };
+    if (!qrCode) return { success: false, message: 'ระบบไม่พบ QR Code บนสลิป โปรดใช้รูปสลิปเต็มใบ' };
 
-    // 2. ใช้ AI อ่านตัวหนังสือ
-    const result = await Tesseract.recognize(imageBuffer, 'tha+eng');
-    let text = result.data.text.replace(/\s+/g, '').replace(/,/g, '');
-    
-    // --- จุดที่ปรับแก้ให้ยืดหยุ่นขึ้น ---
-    
-    // เช็คชื่อบัญชี: ให้เช็คแค่ชื่อ "อภิวรรธน์" หรือ "ภู่ถาวร" คำใดคำหนึ่งก็ได้
-    const isMySlip = text.includes("อภิวรรธน์") || text.includes("ภู่ถาวร") || text.includes("1591355895");
+    // 2. ⚡ ทริคระดับโปร: แปลงสลิปเป็น ขาว-ดำ และเร่งความคมชัด (แก้ปัญหา AI อ่านสีชมพู/ฟ้า ไม่ออก)
+    const processedImageBuffer = await sharp(imageBuffer)
+      .grayscale() // แปลงเป็นขาวดำ
+      .normalize() // เร่งความสว่างและคอนทราสต์ให้ตัวหนังสือชัดเจน
+      .toBuffer();
+
+    // 3. ส่งรูปขาวดำให้ AI อ่าน
+    const result = await Tesseract.recognize(processedImageBuffer, 'tha+eng');
+    let text = result.data.text.replace(/\s+/g, '').replace(/,/g, '').toLowerCase();
+
+    // 4. เช็คชื่อบัญชี (เพิ่มความยืดหยุ่นให้ AI ที่บางทีอ่านสระผิด)
+    const isMySlip = text.includes("อภิวรรธน์") || text.includes("ภู่ถาวร") || text.includes("1591355895") || text.includes("อภิวรรธ");
     if (!isMySlip) {
-       console.log("❌ ไม่พบชื่อบัญชีร้านค้าบนสลิป (ข้อความที่ AI อ่านได้: " + text.substring(0, 50) + "...)");
-       return { success: false, message: '❌ สลิปนี้ไม่ได้โอนเข้าบัญชีของร้านค้า!' };
+       console.log("❌ สลิปผิดบัญชี! (สิ่งที่ AI อ่านได้บางส่วน):", text.substring(0, 50));
+       return { success: false, message: '❌ สลิปนี้ไม่ได้โอนเข้าบัญชีของร้านค้า' };
     }
 
-    // เช็คยอดเงิน: ให้หารูปแบบตัวเลขยอดเงินที่หลากหลายขึ้น
+    // 5. เช็คยอดเงิน (แก้ปัญหา AI อ่านเลข 0 เป็น O หรือ 1 เป็น l)
     const amountFormat1 = `${expectedAmount}.00`;
     const amountFormat2 = expectedAmount.toString();
-    const amountFormat3 = `${expectedAmount}`; // เผื่อไม่มี .00
     
-    let textForAmount = text.replace(/[Oo]/g, '0').replace(/[Ss]/g, '5').replace(/,/g, '');
+    // แปลงตัวอักษรที่ AI มักจำสับสนให้กลับเป็นตัวเลข
+    let textForAmount = text.replace(/[Oo]/g, '0').replace(/[Ss]/g, '5').replace(/[lI]/g, '1');
 
-    if (textForAmount.includes(amountFormat1) || textForAmount.includes(amountFormat2) || textForAmount.includes(amountFormat3)) {
+    if (textForAmount.includes(amountFormat1) || textForAmount.includes(amountFormat2)) {
       console.log(`✅ สำเร็จ! AI พบเลขยอดเงิน ${expectedAmount} บนสลิป โอนเข้าบัญชีร้านจริง!`);
       return { success: true, payload: qrCode.data, amount: parseFloat(expectedAmount) };
     } else {
-      console.log(`❌ สลิปถูกต้อง แต่ AI มองไม่เห็นเลข ${expectedAmount} ในสลิปนี้`);
-      return { success: false, message: `รูปภาพไม่ชัดเจน หรือ สลิปไม่ตรงกับยอด ${expectedAmount} บาท` };
+      console.log(`❌ ยอดเงินไม่ตรง (สิ่งที่ AI อ่านได้):`, textForAmount.substring(0, 100));
+      return { success: false, message: `สลิปถูกต้อง แต่ยอดเงินไม่ตรงกับเป้าหมาย (${expectedAmount} บาท)` };
     }
   } catch (err) {
     console.error("Slip Verification Error:", err);
-    return { success: false, message: 'เกิดข้อผิดพลาดในการวิเคราะห์รูปภาพ' };
+    return { success: false, message: 'เกิดข้อผิดพลาดในการวิเคราะห์รูปภาพ โปรดลองใหม่อีกครั้ง' };
   }
 }
+
 
 // ===== ROUTES =====
 app.post('/api/auth/signup', async (req, res) => {

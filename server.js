@@ -40,7 +40,13 @@ async function sendDiscordAlert(title, description, color) {
 }
 
 // ===== MIDDLEWARE =====
-app.use(cors());
+// 👇 แก้ไขตรงนี้จุดเดียว เพื่อแก้บั๊ก Login / สินค้าไม่ขึ้น
+app.use(cors({
+  origin: '*', 
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+// 👆 
 app.use(express.json());
 
 const upload = multer({ 

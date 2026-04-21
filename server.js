@@ -173,27 +173,38 @@ const transporter = nodemailer.createTransport({
 });
 
 // ==========================================
-// 🛡️ ระบบตรวจสอบสลิป AI
+// 🛡️ ระบบตรวจสอบสลิป AI (อัปเดตให้รองรับได้หลายธนาคารมากขึ้น)
 // ==========================================
 async function verifySlip(imageBuffer, expectedAmount) {
   try {
     console.log(`\n🔍 [1/2] ตรวจสลิปยอดเป้าหมาย: ${expectedAmount} บาท`);
     
+    // 1. เช็คว่ามี QR Code ในสลิปไหม (บังคับต้องมี)
     const { data, info } = await sharp(imageBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const qrCode = jsQR(new Uint8ClampedArray(data), info.width, info.height);
     if (!qrCode) return { success: false, message: 'ระบบไม่พบ QR Code บนสลิป โปรดตรวจสอบรูปภาพ' };
 
+    // 2. ใช้ AI อ่านตัวหนังสือ
     const result = await Tesseract.recognize(imageBuffer, 'tha+eng');
     let text = result.data.text.replace(/\s+/g, '').replace(/,/g, '');
     
-    const isMySlip = text.includes("1591355895") || text.includes("ภู่ถาวร");
-    if (!isMySlip) return { success: false, message: '❌ สลิปนี้ไม่ได้โอนเข้าบัญชีของร้านค้า!' };
+    // --- จุดที่ปรับแก้ให้ยืดหยุ่นขึ้น ---
+    
+    // เช็คชื่อบัญชี: ให้เช็คแค่ชื่อ "อภิวรรธน์" หรือ "ภู่ถาวร" คำใดคำหนึ่งก็ได้
+    const isMySlip = text.includes("อภิวรรธน์") || text.includes("ภู่ถาวร") || text.includes("1591355895");
+    if (!isMySlip) {
+       console.log("❌ ไม่พบชื่อบัญชีร้านค้าบนสลิป (ข้อความที่ AI อ่านได้: " + text.substring(0, 50) + "...)");
+       return { success: false, message: '❌ สลิปนี้ไม่ได้โอนเข้าบัญชีของร้านค้า!' };
+    }
 
+    // เช็คยอดเงิน: ให้หารูปแบบตัวเลขยอดเงินที่หลากหลายขึ้น
     const amountFormat1 = `${expectedAmount}.00`;
     const amountFormat2 = expectedAmount.toString();
-    let textForAmount = text.replace(/[Oo]/g, '0').replace(/[Ss]/g, '5');
+    const amountFormat3 = `${expectedAmount}`; // เผื่อไม่มี .00
+    
+    let textForAmount = text.replace(/[Oo]/g, '0').replace(/[Ss]/g, '5').replace(/,/g, '');
 
-    if (textForAmount.includes(amountFormat1) || textForAmount.includes(amountFormat2)) {
+    if (textForAmount.includes(amountFormat1) || textForAmount.includes(amountFormat2) || textForAmount.includes(amountFormat3)) {
       console.log(`✅ สำเร็จ! AI พบเลขยอดเงิน ${expectedAmount} บนสลิป โอนเข้าบัญชีร้านจริง!`);
       return { success: true, payload: qrCode.data, amount: parseFloat(expectedAmount) };
     } else {
@@ -201,6 +212,7 @@ async function verifySlip(imageBuffer, expectedAmount) {
       return { success: false, message: `รูปภาพไม่ชัดเจน หรือ สลิปไม่ตรงกับยอด ${expectedAmount} บาท` };
     }
   } catch (err) {
+    console.error("Slip Verification Error:", err);
     return { success: false, message: 'เกิดข้อผิดพลาดในการวิเคราะห์รูปภาพ' };
   }
 }

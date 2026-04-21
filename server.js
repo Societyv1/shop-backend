@@ -173,51 +173,50 @@ const transporter = nodemailer.createTransport({
 });
 
 // ==========================================
-// 🛡️ ระบบตรวจสอบสลิป AI (Production V7 - โหมดอ่านตัวเลขแม่นยำขั้นสุด)
+// 🛡️ ระบบตรวจสอบสลิป AI (Production V8 - โหมดสมดุล อ่านครบทุกบรรทัด)
 // ==========================================
 async function verifySlip(imageBuffer, expectedAmount) {
   try {
-    console.log(`\n🔍 [1/2] ตรวจสลิปยอดเป้าหมาย: ${expectedAmount} บาท (โหมดตัวเลข)`);
+    console.log(`\n🔍 [1/2] ตรวจสลิปยอดเป้าหมาย: ${expectedAmount} บาท`);
     
-    // 1. สแกน QR Code (บังคับต้องมี)
+    // 1. สแกน QR Code 
     const { data, info } = await sharp(imageBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const qrCode = jsQR(new Uint8ClampedArray(data), info.width, info.height);
     if (!qrCode) return { success: false, message: '❌ ไม่พบ QR Code บนสลิป' };
 
-    // 2. เคล็ดลับ: ขยายรูปให้ใหญ่ขึ้น 1200px และเร่ง Contrast ให้ตัวเลขสีดำเข้มจัดๆ
+    // 2. ⚡ ปรับใหม่: เลิกใช้ฟิลเตอร์โหดๆ ใช้แค่ขาวดำและขยายรูป เพื่อไม่ให้เลข 123.00 จางหายไป
     const processedImageBuffer = await sharp(imageBuffer)
-      .resize({ width: 1200 }) 
+      .resize({ width: 1000 }) 
       .grayscale()
-      .linear(1.5, -0.1) // เร่งความต่างสี
       .toBuffer();
 
-    // 3. ⚡ ทีเด็ด: บังคับให้อ่านเฉพาะ 'eng' (ภาษาอังกฤษและตัวเลข) ตัดปัญหา AI สับสนสระภาษาไทย
-    const result = await Tesseract.recognize(processedImageBuffer, 'eng');
+    // 3. อ่านทั้ง ไทย+อังกฤษ ให้อ่านเจอคำว่า "จำนวนเงิน" จะได้จับตัวเลขง่ายขึ้น
+    const result = await Tesseract.recognize(processedImageBuffer, 'tha+eng');
     let text = result.data.text.replace(/\s+/g, '').toLowerCase();
 
-    // 4. เช็คบัญชีร้านค้า: หาเลขท้าย 4 ตัว "8515" เท่านั้น
-    if (!text.includes("8515")) {
-       return { success: false, message: '❌ สลิปนี้ไม่ได้โอนเข้าบัญชีของร้านค้า (ไม่พบเลข 8515)' };
+    console.log("📝 ข้อมูลที่ AI อ่านได้บางส่วน:", text.substring(0, 150));
+
+    // 4. เช็คบัญชีร้านค้า: หาเลขท้าย 4 ตัว "8515" หรือชื่อ
+    const isMySlip = text.includes("8515") || text.includes("อภิวรรธน์") || text.includes("ภู่ถาวร");
+    
+    if (!isMySlip) {
+       console.log("❌ ไม่พบเลขท้าย 8515 หรือชื่อบัญชีร้านค้าบนสลิป");
+       return { success: false, message: '❌ สลิปนี้ไม่ได้โอนเข้าบัญชีของร้านค้า' };
     }
 
-    // 5. เช็คยอดเงิน: แปลงอักษรที่ AI มักจำผิดให้เป็นเลข
+    // 5. เช็คยอดเงิน: กวาดตัวเลขทุกจุด
     let textForAmount = text.replace(/[Oo]/g, '0').replace(/[Ss]/g, '5').replace(/[lI|]/g, '1').replace(/,/g, '');
-    
-    // ดึงตัวเลขทุกชุดที่อยู่ในสลิปออกมา
     const matches = textForAmount.match(/\d+\.\d+|\d+/g) || [];
     
-    // แปลงยอดที่ลูกค้ากรอก เป็นตัวเลขเพื่อเทียบ
     const targetAmount = parseFloat(expectedAmount);
-    
-    // ดูว่ามีตัวเลขชุดไหนตรงกับเป้าหมายไหม
     const isAmountMatch = matches.some(num => parseFloat(num) === targetAmount);
 
     if (isAmountMatch) {
-      console.log(`✅ ผ่าน! พบยอดเงิน ${expectedAmount} และเลขบัญชี 8515`);
+      console.log(`✅ ผ่านฉลุย! พบยอดเงิน ${expectedAmount} และเลขบัญชี 8515`);
       return { success: true, payload: qrCode.data, amount: targetAmount };
     } else {
-      console.log(`❌ AI หาเลขไม่เจอ (ตัวเลขที่ AI ดึงมาได้: ${matches.join(', ')})`);
-      return { success: false, message: `สลิปถูกต้อง แต่ยอดเงินไม่ตรงเป้าหมาย (ระบบ AI หาเลข ${expectedAmount} ไม่เจอ)` };
+      console.log(`❌ ยอดเงินไม่ตรง (สิ่งที่ AI เจอ: ${matches.join(', ')})`);
+      return { success: false, message: `สลิปถูกต้อง แต่ยอดเงินไม่ตรงเป้าหมาย (${expectedAmount} บาท)` };
     }
 
   } catch (err) {
@@ -226,7 +225,6 @@ async function verifySlip(imageBuffer, expectedAmount) {
   }
 }
 
-}
 // ===== ROUTES =====
 app.post('/api/auth/signup', async (req, res) => {
   try {

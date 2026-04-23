@@ -74,7 +74,6 @@ const userSchema = new mongoose.Schema({
 
 const productSchema = new mongoose.Schema({
   name: String, description: String, category: String, price: Number, badge: String, image: String,
-  downloadUrl: { type: String, default: null }, // ⚡ เพิ่มช่องลิงก์โหลดไฟล์
   soldCount: { type: Number, default: 0 } 
 });
 
@@ -90,7 +89,6 @@ const refillSchema = new mongoose.Schema({
 const orderSchema = new mongoose.Schema({
   userId: mongoose.Schema.Types.ObjectId,
   productName: String, price: Number, licenseKey: { type: String, default: null },
-  downloadUrl: { type: String, default: null }, // ⚡ เพิ่มช่องลิงก์โหลดไฟล์สำหรับประวัติการซื้อ
   status: { type: String, enum: ['pending', 'completed'], default: 'pending' },
   createdAt: { type: Date, default: Date.now }
 });
@@ -367,7 +365,6 @@ app.get('/api/orders', verifyToken, async (req, res) => {
   res.json(await Order.find({ userId: req.userId }).sort({ createdAt: -1 }));
 });
 
-// 👇 ⚡ จุดที่ 2: อัปเดตตอนกดสั่งซื้อให้ดึงลิงก์ไฟล์ไปเก็บไว้ ⚡
 app.post('/api/orders', verifyToken, async (req, res) => {
   try {
     const user = await User.findById(req.userId);
@@ -382,15 +379,10 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       assignedKey = keyRecord.keyText;
     }
 
-    // ⚡ ดึงข้อมูลสินค้า เพื่อเอาลิงก์ไฟล์
-    const productInfo = await Product.findById(productId);
-    const fileUrl = productInfo ? productInfo.downloadUrl : null;
-
     user.balance -= price;
     await user.save();
 
-    // ⚡ บันทึกลิงก์ลงในประวัติการสั่งซื้อ
-    const order = new Order({ userId: user._id, productName, price, licenseKey: assignedKey, downloadUrl: fileUrl, status: 'completed' });
+    const order = new Order({ userId: user._id, productName, price, licenseKey: assignedKey, status: 'completed' });
     await order.save();
 
     if (productId) {
@@ -404,20 +396,20 @@ app.post('/api/orders', verifyToken, async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'เกิดข้อผิดพลาดในการสั่งซื้อ' }); }
 });
 
-// 👇 ⚡ จุดที่ 3: ใส่ลิงก์ดาวน์โหลดตรงสินค้า ⚡
 async function initializeData() {
   await Product.deleteMany({}); 
   await Product.insertMany([
-    { name: 'Fast Loot', category: 'PUBG PC', price: 79, description: 'เก็บของไวใช้ได้กับหน้าจอ 1920x1080 กับ 1728x1080 เท่านั้น', badge: 'HOT', image: '/images/1.gif', soldCount: 9 },
-    { name: 'Macro External', category: 'PUBG PC', price: 149, description: 'ใช้งานผ่านเว็บไซต์ สามารถปรับความแรงในการดึงมาโครได้ตามอิสระ', badge: 'NEW', image: '/images/5.jpg', downloadUrl: 'https://www.mediafire.com/file/tjhm8q83phd98yg/SOCIETYWEB.rar/file', soldCount: 5 },
+    { name: 'Fast Loot', category: 'PUBG PC', price: 79, description: 'เก็บของไวใช้ได้กับหน้าจอ 1920x1080 กับ 1728x1080 เท่านั้น', badge: 'HOT', image: '/images/1.gif' , soldCount: 9 },
+    { name: 'Macro External', category: 'PUBG PC', price: 149, description: 'ใช้งานผ่านเว็บไซต์ สามารถปรับความแรงในการดึงมาโครได้ตามอิสระ', badge: 'NEW', image: '/images/5.jpg', soldCount: 5 },
     { name: 'Macro LOGITECH ONLY', category: 'PUBG PC', price: 179, description: 'ใช้ได้เฉพาะเมาส์ LOGITECHเท่านั้น', badge: 'NEW', image: '/images/3.gif', soldCount: 14 },
     { name: 'Macro ALLMOUSE', category: 'PUBG PC', price: 199, description: 'สามารถใช้ได้กับเมาส์ทุกชนิด และมีตั้งค่าสำหรับDPI 400/800/1600', badge: 'HOT', image: '/images/2.gif', soldCount: 68 },
     { name: 'Special Pack', category: 'PUBG PC', price: 229, description: 'จะได้ตัวALLMOUSE พร้อมกับFAST LOOT คุ้มสุดๆ!!', badge: 'HOT', image: '/images/4.jpg', soldCount: 78 },
-    { name: 'CMD SOCIETY', category: 'FIVEM', price: 29, description: 'ค่าขาว 100%', image: '/images/6.jpg', downloadUrl: 'https://www.mediafire.com/file/tf8mshzaz0j6a9m/CMD_society.rar/file', soldCount: 0 },
-    { name: 'RESHADE SOCIETY', category: 'FIVEM', price: 20, description: 'มีReshadeมากกว่า 60+ PRESET', image: '/images/7.jpg', downloadUrl: 'https://www.mediafire.com/file/thmir3bn1bo1wk0/%25E0%25B8%25A3%25E0%25B8%25B5%25E0%25B9%2580%25E0%25B8%258A%25E0%25B8%25A3%25E0%25B8%2594_Society.rar/file', soldCount: 0 },
-    { name: 'SYSTEM TUNING PERFORMANCE', category: 'FIVEM', price: 5, description: 'ช่วยปรับค่าเน็ต และปรับค่าต่างๆในวินโด้ให้มีประสิทธิภาพมากขึ้น', badge: 'NEW', image: '/images/8.jpg', downloadUrl: 'https://www.mediafire.com/file/g6caw7kn5j4fy4f/OPTIMIZATION+-+THE+ULTIMATE+CONFIG.bat/file', soldCount: 0 }
+    { name: 'CMD SOCIETY', category: 'FIVEM', price: 29, description: 'ค่าขาว 100%', image: '/images/6.jpg', soldCount: 0 },
+    { name: 'RESHADE SOCIETY', category: 'FIVEM', price: 20, description: 'มีReshadeมากกว่า 60+ PRESET', image: '/images/7.jpg', soldCount: 0 },
+    { name: 'SYSTEM TUNING PERFORMANCE', category: 'FIVEM', price: 5, description: 'ช่วยปรับค่าเน็ต และปรับค่าต่างๆในวินโด้ให้มีประสิทธิภาพมากขึ้น', badge: 'NEW', image: '/images/8.jpg', soldCount: 0 }
+ 
   ]);
-  console.log('✅ รีเซ็ตและอัปเดตสินค้า (เพิ่มระบบลิงก์โหลดไฟล์) เรียบร้อยแล้ว!');
+  console.log('✅ รีเซ็ตและอัปเดตสินค้า (เพิ่มรูปภาพ) เรียบร้อยแล้ว!');
 }
 
 app.get('/api/admin/stats', verifyToken, verifyAdmin, async (req, res) => {

@@ -405,7 +405,7 @@ async function initializeData() {
     { name: 'Macro ALLMOUSE', category: 'PUBG PC', price: 199, description: 'สามารถใช้ได้กับเมาส์ทุกชนิด และมีตั้งค่าสำหรับDPI 400/800/1600', badge: 'HOT', image: '/images/2.gif', soldCount: 68 },
     { name: 'Special Pack', category: 'PUBG PC', price: 229, description: 'จะได้ตัวALLMOUSE พร้อมกับFAST LOOT คุ้มสุดๆ!!', badge: 'HOT', image: '/images/4.jpg', soldCount: 78 },
     { name: 'CMD SOCIETY', category: 'FIVEM', price: 29, description: 'ค่าขาว 100%', image: '/images/6.jpg', soldCount: 0 },
-    { name: 'RESHADE SOCIETY', category: 'FIVEM', price: 20, description: 'มีReshadeมากกว่า 60+ PRESET', image: '/images/7.jpg', soldCount: 0 },
+    { name: 'RESHADE&ROAD SOCIETY', category: 'FIVEM', price: 20, description: 'มีReshadeมากกว่า 200+ PRESET', image: '/images/7.jpg', soldCount: 0 },
     { name: 'SYSTEM TUNING PERFORMANCE', category: 'FIVEM', price: 5, description: 'ช่วยปรับค่าเน็ต และปรับค่าต่างๆในวินโด้ให้มีประสิทธิภาพมากขึ้น', badge: 'NEW', image: '/images/8.jpg', soldCount: 0 }
  
   ]);

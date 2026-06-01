@@ -399,14 +399,14 @@ app.post('/api/orders', verifyToken, async (req, res) => {
 async function initializeData() {
   await Product.deleteMany({}); 
   await Product.insertMany([
-    { name: 'Fast Loot', category: 'PUBG PC', price: 79, description: 'เก็บของไวใช้ได้กับหน้าจอ 1920x1080 กับ 1728x1080 เท่านั้น', badge: 'HOT', image: '/images/1.gif' , soldCount: 9 },
+    { name: 'Fast Loot', category: 'PUBG PC', price: 79, description: 'เก็บของไวใช้ได้กับหน้าจอ 1920x1080 กับ 1728x1080 เท่านั้น', badge: 'HOT', image: '/images/1.gif' , soldCount: 11 },
     { name: 'Macro External', category: 'PUBG PC', price: 149, description: 'ใช้งานผ่านเว็บไซต์ สามารถปรับความแรงในการดึงมาโครได้ตามอิสระ', badge: 'NEW', image: '/images/4.jpg', soldCount: 5 },
-    { name: 'Macro ALLMOUSE', category: 'PUBG PC', price: 199, description: 'สามารถใช้ได้กับเมาส์ทุกชนิด และมีตั้งค่าสำหรับDPI 400/800/1600', badge: 'HOT', image: '/images/2.gif', soldCount: 68 },
+    { name: 'Macro ALLMOUSE', category: 'PUBG PC', price: 199, description: 'สามารถใช้ได้กับเมาส์ทุกชนิด และมีตั้งค่าสำหรับDPI 400/800/1600', badge: 'HOT', image: '/images/2.gif', soldCount: 74 },
     { name: 'Special Pack', category: 'PUBG PC', price: 229, description: 'จะได้ตัวALLMOUSE พร้อมกับFAST LOOT คุ้มสุดๆ!!', badge: 'HOT', image: '/images/3.jpg', soldCount: 78 },
-    { name: 'CMD SOCIETY', category: 'FIVEM', price: 29, description: 'ค่าขาว 100%', image: '/images/5.jpg', soldCount: 0 },
+    { name: 'CMD SOCIETY', category: 'FIVEM', price: 29, description: 'ค่าขาว 100%', image: '/images/5.jpg', soldCount: 11 },
     { name: 'RESHADE&ROAD SOCIETY', category: 'FIVEM', price: 20, description: 'มีReshadeมากกว่า 200+ PRESET', image: '/images/6.jpg', soldCount: 1 },
-    { name: 'SYSTEM TUNING PERFORMANCE', category: 'FIVEM', price: 5, description: 'ช่วยปรับค่าเน็ต และปรับค่าต่างๆในวินโด้ให้มีประสิทธิภาพมากขึ้น', badge: 'NEW', image: '/images/7.jpg', soldCount: 1 },
-    { name: 'SOCIETYXSHOP - PC Optimizer (จูนคอมลดดีเลย์)', category: 'FIVEM', price: 15, description: 'ปลดล็อกขีดจำกัด PC ดัน FPS ลดปิง แก้เมาส์หน่วง... จบในคลิกเดียว! ค่าร้านดัง', image: '/images/9.jpg', soldCount: 0 }
+    { name: 'SYSTEM TUNING PERFORMANCE', category: 'FIVEM', price: 5, description: 'ช่วยปรับค่าเน็ต และปรับค่าต่างๆในวินโด้ให้มีประสิทธิภาพมากขึ้น', badge: 'NEW', image: '/images/7.jpg', soldCount: 7 },
+    { name: 'SOCIETYXSHOP - PC Optimizer (จูนคอมลดดีเลย์)', category: 'FIVEM', price: 15, description: 'ปลดล็อกขีดจำกัด PC ดัน FPS ลดปิง แก้เมาส์หน่วง... จบในคลิกเดียว! ค่าร้านดัง', image: '/images/9.jpg', soldCount: 5 }
  
   ]);
   console.log('✅ รีเซ็ตและอัปเดตสินค้า (เพิ่มรูปภาพ) เรียบร้อยแล้ว!');

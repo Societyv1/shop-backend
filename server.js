@@ -406,7 +406,7 @@ async function initializeData() {
     { name: 'CMD SOCIETY', category: 'FIVEM', price: 29, description: 'ค่าขาว 100%', image: '/images/5.jpg', soldCount: 11 },
     { name: 'RESHADE&ROAD SOCIETY', category: 'FIVEM', price: 20, description: 'มีReshadeมากกว่า 200+ PRESET', image: '/images/6.jpg', soldCount: 1 },
     { name: 'SYSTEM TUNING PERFORMANCE', category: 'FIVEM', price: 5, description: 'ช่วยปรับค่าเน็ต และปรับค่าต่างๆในวินโด้ให้มีประสิทธิภาพมากขึ้น', badge: 'NEW', image: '/images/7.jpg', soldCount: 7 },
-    { name: 'SOCIETYXSHOP - PC Optimizer (จูนคอมลดดีเลย์)', category: 'FIVEM', price: 15, description: 'ปลดล็อกขีดจำกัด PC ดัน FPS ลดปิง แก้เมาส์หน่วง... จบในคลิกเดียว! ค่าร้านดัง', image: '/images/9.jpg', soldCount: 5 }
+    { name: 'SOCIETYXSHOP - PC Optimizer (จูนคอมลดดีเลย์)', category: 'FIVEM', price: 15, description: 'ปลดล็อกขีดจำกัด PC ดัน FPS ลดปิง แก้เมาส์หน่วง... จบในคลิกเดียว! ค่าร้านดัง', image: '/images/9.jpg', soldCount: 5 },
     { name: 'SOCIETYXSHOP - สั่งคลิ', category: 'FIVEM', price: 45, description: 'สั่งคลิลั่นๆ แต่ไม่คลิมั่วเนียนๆ เอาไว้เล่นเดิมพันสบาย', badge: 'NEW', image: '/images/8.jpg', soldCount: 0 }
  
   ]);

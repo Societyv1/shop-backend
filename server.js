@@ -389,10 +389,15 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       await Product.findByIdAndUpdate(productId, { $inc: { soldCount: 1 } });
     }
 
-    // 📢 ยิงแจ้งเตือน Discord (สีทอง/ส้ม)
-    sendDiscordAlert("🛒 ออเดอร์ใหม่เข้าแล้ว!", `**ผู้ซื้อ:** ${user.username}\n**สินค้า:** ${productName}\n**ราคา:** ฿${price.toFixed(2)}`, 16766720);
+    // 📢 ยิงแจ้งเตือน Discord (เพิ่มรหัสคำสั่งซื้อ + คีย์ถ้ามี)
+    let discordMsg = `**รหัสคำสั่งซื้อ:** \`#${order._id}\`\n**ผู้ซื้อ:** ${user.username}\n**สินค้า:** ${productName}\n**ราคา:** ฿${price.toFixed(2)}`;
+    if (assignedKey) {
+      discordMsg += `\n**License Key:** \`${assignedKey}\``;
+    }
 
-    res.json({ message: 'สั่งซื้อสำเร็จ', newBalance: user.balance });
+    sendDiscordAlert("🛒 ออเดอร์ใหม่เข้าแล้ว!", discordMsg, 16766720);
+
+    res.json({ message: 'สั่งซื้อสำเร็จ', orderId: order._id, licenseKey: assignedKey, newBalance: user.balance });
   } catch (err) { res.status(500).json({ message: 'เกิดข้อผิดพลาดในการสั่งซื้อ' }); }
 });
 

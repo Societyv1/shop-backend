@@ -12,27 +12,22 @@ const qrcode = require('qrcode');
 const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
 
-// 🟢 นำเข้า http และ socket.io สำหรับทำ Real-time
 const http = require('http');
 const { Server } = require('socket.io');
 
 dotenv.config();
 
 const app = express();
-const server = http.createServer(app); // 🟢 สร้าง HTTP Server จาก Express
-const io = new Server(server, {        // 🟢 เปิดใช้งาน Socket.io
+const server = http.createServer(app);
+const io = new Server(server, { 
   cors: {
     origin: '*',
     methods: ['GET', 'POST']
   }
 });
 
-// ==========================================
-// 🚨🚨 1. เอา URL DISCORD WEBHOOK มาวางในเครื่องหมายคำพูดข้างล่างนี้ครับ 🚨🚨
-// ==========================================
 const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1496014887032455188/QdbT0wpiTu5Wjgg59sptb9aTb4X3VioQUcOyaMxHfMvwZnAWwxLSwdv276AIRu8cMwSn";
 
-// 🤖 ฟังก์ชันยิงแจ้งเตือนเข้า Discord
 async function sendDiscordAlert(title, description, color) {
   if (!DISCORD_WEBHOOK_URL || !DISCORD_WEBHOOK_URL.startsWith('http')) return;
   try {
@@ -48,7 +43,6 @@ async function sendDiscordAlert(title, description, color) {
   }
 }
 
-// ===== MIDDLEWARE =====
 app.use(cors({
   origin: '*', 
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
@@ -61,16 +55,14 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }
 });
 
-// ===== DATABASE =====
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/societyxshop', {
   useNewUrlParser: true,
   useUnifiedTopology: true
 });
 
-// ===== SCHEMAS & MODELS =====
 const userSchema = new mongoose.Schema({
   username: { type: String, unique: true, required: true },
-  tag: { type: String, default: null }, // 🟢 เพิ่มฟิลด์เก็บ Tag เลข 4 หลัก
+  tag: { type: String, default: null },
   email: { type: String, unique: true, required: true },
   password: { type: String, required: true },
   balance: { type: Number, default: 0 },
@@ -99,8 +91,16 @@ const promoCodeSchema = new mongoose.Schema({
   bonusAmount: { type: Number, required: true },
   maxUses: { type: Number, default: 100 },
   usedCount: { type: Number, default: 0 },
-  usedByUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // 🟢 เก็บรายชื่อไอดีที่ใช้แล้ว
+  usedByUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  expiresAt: { type: Date, default: null },
   isActive: { type: Boolean, default: true }
+});
+
+const announcementSchema = new mongoose.Schema({
+  message: { type: String, required: true },
+  type: { type: String, default: 'info' },
+  isActive: { type: Boolean, default: true },
+  createdAt: { type: Date, default: Date.now }
 });
 
 const orderSchema = new mongoose.Schema({
@@ -121,10 +121,10 @@ const User = mongoose.model('User', userSchema);
 const Product = mongoose.model('Product', productSchema);
 const Refill = mongoose.model('Refill', refillSchema);
 const PromoCode = mongoose.model('PromoCode', promoCodeSchema);
+const Announcement = mongoose.model('Announcement', announcementSchema);
 const Order = mongoose.model('Order', orderSchema);
 const Key = mongoose.model('Key', keySchema);
 
-// ===== AUTH MIDDLEWARES (ต้องวางไว้ก่อนเส้นทาง API ทั้งหมด) =====
 const verifyToken = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ message: 'ไม่พบ token' });
@@ -147,9 +147,6 @@ const verifyAdmin = async (req, res, next) => {
   }
 };
 
-// ==========================================
-// 📧 ระบบส่งอีเมล (Nodemailer)
-// ==========================================
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
@@ -158,7 +155,6 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// ===== SEED KEYS =====
 const initialKeys = [
   "Societyx-y5qwbL", "Societyx-mynlCs", "Societyx-LX7FQd", "Societyx-IUMSgm", "Societyx-L7iN1O",
   "Societyx-PcZ0EN", "Societyx-Cy61xR", "Societyx-88dICw", "Societyx-JH50EE", "Societyx-gMkmn0",
@@ -191,39 +187,25 @@ async function seedDatabaseKeys() {
 }
 seedDatabaseKeys();
 
-// ==========================================
-// 🛡️ ระบบตรวจสอบสลิป AI 
-// ==========================================
 async function verifySlip(imageBuffer, expectedAmount) {
   try {
-    console.log(`\n🔍 [1/2] ตรวจสลิปยอดเป้าหมาย: ${expectedAmount} บาท`);
-    
-    // 1. สแกน QR Code 
     const { data, info } = await sharp(imageBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const qrCode = jsQR(new Uint8ClampedArray(data), info.width, info.height);
     if (!qrCode) return { success: false, message: '❌ ไม่พบ QR Code บนสลิป' };
 
-    // 2. ขยายรูปเป็นขาวดำ
     const processedImageBuffer = await sharp(imageBuffer)
       .resize({ width: 1000 }) 
       .grayscale()
       .toBuffer();
 
-    // 3. อ่านทั้ง ไทย+อังกฤษ
     const result = await Tesseract.recognize(processedImageBuffer, 'tha+eng');
     let text = result.data.text.replace(/\s+/g, '').toLowerCase();
 
-    console.log("📝 ข้อมูลที่ AI อ่านได้บางส่วน:", text.substring(0, 150));
-
-    // 4. เช็คบัญชีร้านค้า
     const isMySlip = text.includes("8515") || text.includes("อภิวรรธน์") || text.includes("ภู่ถาวร");
-    
     if (!isMySlip) {
-       console.log("❌ ไม่พบเลขท้าย 8515 หรือชื่อบัญชีร้านค้าบนสลิป");
        return { success: false, message: '❌ สลิปนี้ไม่ได้โอนเข้าบัญชีของร้านค้า' };
     }
 
-    // 5. เช็คยอดเงิน
     let textForAmount = text.replace(/[Oo]/g, '0').replace(/[Ss]/g, '5').replace(/[lI|]/g, '1').replace(/,/g, '');
     const matches = textForAmount.match(/\d+\.\d+|\d+/g) || [];
     
@@ -231,27 +213,20 @@ async function verifySlip(imageBuffer, expectedAmount) {
     const isAmountMatch = matches.some(num => parseFloat(num) === targetAmount);
 
     if (isAmountMatch) {
-      console.log(`✅ ผ่านฉลุย! พบยอดเงิน ${expectedAmount} และเลขบัญชี 8515`);
       return { success: true, payload: qrCode.data, amount: targetAmount };
     } else {
-      console.log(`❌ ยอดเงินไม่ตรง (สิ่งที่ AI เจอ: ${matches.join(', ')})`);
       return { success: false, message: `สลิปถูกต้อง แต่ยอดเงินไม่ตรงเป้าหมาย (${expectedAmount} บาท)` };
     }
-
   } catch (err) {
-    console.error("Slip Verification Error:", err);
     return { success: false, message: 'ระบบขัดข้อง โปรดลองใหม่อีกครั้ง' };
   }
 }
 
-// ===== ROUTES =====
 app.post('/api/auth/signup', async (req, res) => {
   try {
     const { username, email, password } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
-    
     const tag = Math.floor(1000 + Math.random() * 9000).toString();
-    
     const newUser = new User({ username, tag, email, password: hashedPassword });
     await newUser.save();
 
@@ -381,7 +356,6 @@ app.get('/api/refill/history', verifyToken, async (req, res) => {
   res.json(await Refill.find({ userId: req.userId }).sort({ date: -1 }));
 });
 
-// 🟢 API ตรวจสอบและใช้โค้ดเติมเงินรับโบนัส (ป้องกันใช้ซ้ำต่อ 1 บัญชี)
 app.post('/api/refill/redeem-code', verifyToken, async (req, res) => {
   try {
     const { code } = req.body;
@@ -390,7 +364,10 @@ app.post('/api/refill/redeem-code', verifyToken, async (req, res) => {
     const promo = await PromoCode.findOne({ code: code.trim().toUpperCase(), isActive: true });
     if (!promo) return res.status(400).json({ message: '❌ โค้ดนี้ไม่ถูกต้อง หรือหมดอายุแล้ว' });
 
-    // 🛑 เช็กว่าไอดีนี้เคยใช้โค้ดนี้ไปแล้วหรือยัง
+    if (promo.expiresAt && new Date() > new Date(promo.expiresAt)) {
+      return res.status(400).json({ message: '❌ โค้ดนี้หมดเขตใช้งานแล้ว' });
+    }
+
     if (promo.usedByUsers.includes(req.userId)) {
       return res.status(400).json({ message: '❌ คุณได้ใช้โค้ดนี้ไปแล้ว ไม่สามารถใช้ซ้ำได้อีก' });
     }
@@ -402,7 +379,6 @@ app.post('/api/refill/redeem-code', verifyToken, async (req, res) => {
     const user = await User.findById(req.userId);
     user.balance += promo.bonusAmount;
     
-    // บันทึกว่าไอดีนี้ใช้แล้ว และเพิ่มจำนวนคนใช้
     promo.usedByUsers.push(user._id);
     promo.usedCount += 1;
 
@@ -417,19 +393,48 @@ app.post('/api/refill/redeem-code', verifyToken, async (req, res) => {
   }
 });
 
-// 👑 API สำหรับแอดมินสร้างโค้ดเติมเงินใหม่
 app.post('/api/admin/promo-codes', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const { code, bonusAmount, maxUses } = req.body;
+    const { code, bonusAmount, maxUses, expiresAt } = req.body;
     const newPromo = new PromoCode({
       code: code.trim().toUpperCase(),
       bonusAmount: parseFloat(bonusAmount),
-      maxUses: maxUses ? parseInt(maxUses) : 100
+      maxUses: maxUses ? parseInt(maxUses) : 100,
+      expiresAt: expiresAt ? new Date(expiresAt) : null
     });
     await newPromo.save();
     res.json({ success: true, message: `สร้างโค้ด ${newPromo.code} (โบนัส ฿${newPromo.bonusAmount}) สำเร็จ!` });
   } catch (err) {
     res.status(500).json({ message: 'โค้ดนี้มีอยู่ในระบบแล้ว หรือเกิดข้อผิดพลาด' });
+  }
+});
+
+app.get('/api/announcements', async (req, res) => {
+  try {
+    const activeAnnouncements = await Announcement.find({ isActive: true }).sort({ createdAt: -1 });
+    res.json(activeAnnouncements);
+  } catch (err) {
+    res.status(500).json({ message: 'Error loading announcements' });
+  }
+});
+
+app.post('/api/admin/announcements', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { message, type } = req.body;
+    const newAnnounce = new Announcement({ message, type });
+    await newAnnounce.save();
+    res.json({ success: true, message: 'สร้างประกาศสำเร็จ!' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error creating announcement' });
+  }
+});
+
+app.get('/api/user/promo-history', verifyToken, async (req, res) => {
+  try {
+    const usedPromos = await PromoCode.find({ usedByUsers: req.userId }).select('code bonusAmount expiresAt');
+    res.json(usedPromos);
+  } catch (err) {
+    res.status(500).json({ message: 'Error loading promo history' });
   }
 });
 
@@ -496,10 +501,6 @@ app.post('/api/orders', verifyToken, async (req, res) => {
     res.json({ message: 'สั่งซื้อสำเร็จ', orderId: order._id, licenseKey: assignedKey, newBalance: user.balance });
   } catch (err) { res.status(500).json({ message: 'เกิดข้อผิดพลาดในการสั่งซื้อ' }); }
 });
-
-// ==========================================
-// 🟢 API สำหรับ Admin ดึงรายชื่อลูกค้า และ จัดการเงิน 
-// ==========================================
 
 app.get('/api/admin/stats', verifyToken, verifyAdmin, async (req, res) => {
   const usersCount = await User.countDocuments();

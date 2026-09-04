@@ -36,7 +36,6 @@ const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/149601488703245518
 async function sendDiscordAlert(title, description, color) {
   if (!DISCORD_WEBHOOK_URL || !DISCORD_WEBHOOK_URL.startsWith('http')) return;
   try {
-    // ต้องใช้ fetch ใน Node.js (ถ้า Node เวอร์ชั่นใหม่ๆ จะมีมาให้เลย)
     await fetch(DISCORD_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -50,13 +49,11 @@ async function sendDiscordAlert(title, description, color) {
 }
 
 // ===== MIDDLEWARE =====
-// 👇 แก้ไขตรงนี้จุดเดียว เพื่อแก้บั๊ก Login / สินค้าไม่ขึ้น
 app.use(cors({
   origin: '*', 
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-// 👆 
 app.use(express.json());
 
 const upload = multer({ 
@@ -73,6 +70,7 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/societyxs
 // ===== SCHEMAS & MODELS =====
 const userSchema = new mongoose.Schema({
   username: { type: String, unique: true, required: true },
+  tag: { type: String, default: null }, // 🟢 เพิ่มฟิลด์เก็บ Tag เลข 4 หลัก
   email: { type: String, unique: true, required: true },
   password: { type: String, required: true },
   balance: { type: Number, default: 0 },
@@ -194,19 +192,19 @@ async function verifySlip(imageBuffer, expectedAmount) {
     const qrCode = jsQR(new Uint8ClampedArray(data), info.width, info.height);
     if (!qrCode) return { success: false, message: '❌ ไม่พบ QR Code บนสลิป' };
 
-    // 2. ⚡ ปรับใหม่: เลิกใช้ฟิลเตอร์โหดๆ ใช้แค่ขาวดำและขยายรูป เพื่อไม่ให้เลข 123.00 จางหายไป
+    // 2. ขยายรูปเป็นขาวดำ
     const processedImageBuffer = await sharp(imageBuffer)
       .resize({ width: 1000 }) 
       .grayscale()
       .toBuffer();
 
-    // 3. อ่านทั้ง ไทย+อังกฤษ ให้อ่านเจอคำว่า "จำนวนเงิน" จะได้จับตัวเลขง่ายขึ้น
+    // 3. อ่านทั้ง ไทย+อังกฤษ
     const result = await Tesseract.recognize(processedImageBuffer, 'tha+eng');
     let text = result.data.text.replace(/\s+/g, '').toLowerCase();
 
     console.log("📝 ข้อมูลที่ AI อ่านได้บางส่วน:", text.substring(0, 150));
 
-    // 4. เช็คบัญชีร้านค้า: หาเลขท้าย 4 ตัว "8515" หรือชื่อ
+    // 4. เช็คบัญชีร้านค้า
     const isMySlip = text.includes("8515") || text.includes("อภิวรรธน์") || text.includes("ภู่ถาวร");
     
     if (!isMySlip) {
@@ -214,7 +212,7 @@ async function verifySlip(imageBuffer, expectedAmount) {
        return { success: false, message: '❌ สลิปนี้ไม่ได้โอนเข้าบัญชีของร้านค้า' };
     }
 
-    // 5. เช็คยอดเงิน: กวาดตัวเลขทุกจุด
+    // 5. เช็คยอดเงิน
     let textForAmount = text.replace(/[Oo]/g, '0').replace(/[Ss]/g, '5').replace(/[lI|]/g, '1').replace(/,/g, '');
     const matches = textForAmount.match(/\d+\.\d+|\d+/g) || [];
     
@@ -240,15 +238,19 @@ app.post('/api/auth/signup', async (req, res) => {
   try {
     const { username, email, password } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = new User({ username, email, password: hashedPassword });
+    
+    // 🟢 สุ่มแท็ก 4 หลัก
+    const tag = Math.floor(1000 + Math.random() * 9000).toString();
+    
+    const newUser = new User({ username, tag, email, password: hashedPassword });
     await newUser.save();
 
-    // 📢 ยิงแจ้งเตือน Discord (สีเขียว)
-    sendDiscordAlert("✨ สมาชิกใหม่เข้าร่วมร้าน!", `**Username:** ${username}\n**Email:** ${email}`, 3066993);
+    // 📢 ยิงแจ้งเตือน Discord โชว์ Tag ด้วย
+    sendDiscordAlert("✨ สมาชิกใหม่เข้าร่วมร้าน!", `**Username:** ${username}#${tag}\n**Email:** ${email}`, 3066993);
 
     const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET || 'your-secret-key');
     res.json({ token, user: newUser });
-  } catch (err) { res.status(500).json({ message: 'เกิดข้อผิดพลาดในการสมัครสมาชิก' }); }
+  } catch (err) { res.status(500).json({ message: 'เกิดข้อผิดพลาดในการสมัครสมาชิก (อาจมีชื่อซ้ำ)' }); }
 });
 
 app.post('/api/auth/login', async (req, res) => {
@@ -309,7 +311,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
 });
 
 app.get('/api/auth/profile', verifyToken, async (req, res) => {
-  const user = await User.findById(req.userId);
+  const user = await User.findById(req.userId).select('-password');
   res.json(user);
 });
 
@@ -360,8 +362,8 @@ app.post('/api/refill/verify', verifyToken, upload.single('slip'), async (req, r
     const refill = new Refill({ userId: req.userId, amount: amount, status: 'verified', qrPayload: slipResult.payload, slipImage: 'uploaded' });
     await refill.save();
 
-    // 📢 ยิงแจ้งเตือน Discord (สีฟ้า)
-    sendDiscordAlert("💰 มีการโอนเงินเข้าสู่ระบบ!", `**ผู้ใช้:** ${user.username}\n**ยอดเงิน:** ฿${amount.toFixed(2)}\n**ยอดเงินคงเหลือปัจจุบัน:** ฿${user.balance.toFixed(2)}`, 3447003);
+    // 📢 ยิงแจ้งเตือน Discord อัปเดตให้มี Tag
+    sendDiscordAlert("💰 มีการโอนเงินเข้าสู่ระบบ!", `**ผู้ใช้:** ${user.username}#${user.tag || '0000'}\n**ยอดเงิน:** ฿${amount.toFixed(2)}\n**ยอดเงินคงเหลือปัจจุบัน:** ฿${user.balance.toFixed(2)}`, 3447003);
 
     res.json({ success: true, newBalance: user.balance, message: `เติมเงินสำเร็จ! ยอด ${amount} บาท` });
   } catch (err) { res.status(500).json({ message: 'เกิดข้อผิดพลาดในการเติมเงิน' }); }
@@ -398,14 +400,12 @@ app.post('/api/orders', verifyToken, async (req, res) => {
     // 🟢 ระบบอัปเดตยอดขาย และแจ้งเตือนแบบ Real-time
     let updatedProduct = null;
     if (productId) {
-      // อัปเดตยอดขายบวก 1 และดึงข้อมูลใหม่มา
       updatedProduct = await Product.findByIdAndUpdate(
         productId, 
         { $inc: { soldCount: 1 } },
         { new: true }
       );
     } else if (productName) {
-      // เผื่อหน้าบ้านส่งมาแค่ชื่อ
       updatedProduct = await Product.findOneAndUpdate(
         { name: productName }, 
         { $inc: { soldCount: 1 } },
@@ -413,9 +413,7 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       );
     }
 
-    // 🟢 ส่งข้อมูลไปยัง Client ทุกคนที่เปิดเว็บอยู่ให้ตัวเลขเด้งขึ้นเอง
     if (updatedProduct) {
-      // เซ็นเซอร์ชื่อผู้ซื้อ (เช่น copterkk -> co****kk)
       const buyerName = user.username.length > 4 
         ? user.username.substring(0, 2) + '****' + user.username.slice(-2)
         : user.username.substring(0, 1) + '***';
@@ -424,14 +422,14 @@ app.post('/api/orders', verifyToken, async (req, res) => {
         productId: updatedProduct._id,
         productName: updatedProduct.name,
         newSoldCount: updatedProduct.soldCount,
-        productImage: updatedProduct.image, // ส่งรูปไปด้วย
-        buyerName: buyerName,               // ชื่อคนซื้อแบบเซ็นเซอร์
-        time: new Date().toLocaleString('th-TH') // เวลาที่ซื้อ
+        productImage: updatedProduct.image, 
+        buyerName: buyerName,               
+        time: new Date().toLocaleString('th-TH') 
       });
     }
 
-    // 📢 ยิงแจ้งเตือน Discord
-    let discordMsg = `**รหัสคำสั่งซื้อ:** \`#${order._id}\`\n**ผู้ซื้อ:** ${user.username}\n**สินค้า:** ${productName}\n**ราคา:** ฿${price.toFixed(2)}`;
+    // 📢 ยิงแจ้งเตือน Discord ใส่ Tag
+    let discordMsg = `**รหัสคำสั่งซื้อ:** \`#${order._id}\`\n**ผู้ซื้อ:** ${user.username}#${user.tag || '0000'}\n**สินค้า:** ${productName}\n**ราคา:** ฿${price.toFixed(2)}`;
     if (assignedKey) {
       discordMsg += `\n**License Key:** \`${assignedKey}\``;
     }
@@ -441,34 +439,47 @@ app.post('/api/orders', verifyToken, async (req, res) => {
   } catch (err) { res.status(500).json({ message: 'เกิดข้อผิดพลาดในการสั่งซื้อ' }); }
 });
 
-async function initializeData() {
-  const count = await Product.countDocuments();
-  // 🟢 เช็คก่อนว่ามีสินค้าหรือยัง ถ้ายังไม่มี(นับได้ 0) ค่อยเพิ่มข้อมูล
-  // วิธีนี้ทำให้ยอดขายที่บวกไปแล้ว ไม่หายตอนรีสตาร์ทเซิร์ฟเวอร์
-  if (count === 0) {
-    await Product.insertMany([
-      { name: 'Fast Loot', category: 'PUBG PC', price: 79, description: 'เก็บของไวใช้ได้กับหน้าจอ 1920x1080 กับ 1728x1080 เท่านั้น', badge: 'HOT', image: '/images/1.gif' , soldCount: 11 },
-      { name: 'Macro External', category: 'PUBG PC', price: 149, description: 'ใช้งานผ่านเว็บไซต์ สามารถปรับความแรงในการดึงมาโครได้ตามอิสระ', badge: 'NEW', image: '/images/4.jpg', soldCount: 5 },
-      { name: 'Macro ALLMOUSE', category: 'PUBG PC', price: 199, description: 'สามารถใช้ได้กับเมาส์ทุกชนิด และมีตั้งค่าสำหรับDPI 400/800/1600', badge: 'HOT', image: '/images/2.gif', soldCount: 74 },
-      { name: 'Special Pack', category: 'PUBG PC', price: 229, description: 'จะได้ตัวALLMOUSE พร้อมกับFAST LOOT คุ้มสุดๆ!!', badge: 'HOT', image: '/images/3.jpg', soldCount: 78 },
-      { name: 'CMD SOCIETY', category: 'FIVEM', price: 29, description: 'ค่าขาว 100%', image: '/images/5.jpg', soldCount: 11 },
-      { name: 'RESHADE&ROAD SOCIETY', category: 'FIVEM', price: 20, description: 'มีReshadeมากกว่า 200+ PRESET', image: '/images/6.jpg', soldCount: 1 },
-      { name: 'SYSTEM TUNING PERFORMANCE', category: 'FIVEM', price: 5, description: 'ช่วยปรับค่าเน็ต และปรับค่าต่างๆในวินโด้ให้มีประสิทธิภาพมากขึ้น', badge: 'NEW', image: '/images/7.jpg', soldCount: 7 },
-      { name: 'SOCIETYXSHOP - PC Optimizer (จูนคอมลดดีเลย์)', category: 'FIVEM', price: 15, description: 'ปลดล็อกขีดจำกัด PC ดัน FPS ลดปิง แก้เมาส์หน่วง... จบในคลิกเดียว! ค่าร้านดัง', image: '/images/9.jpg', soldCount: 8 },
-      { name: 'SOCIETYXSHOP - สั่งคลิ', category: 'FIVEM', price: 45, description: 'สั่งคลิลั่นๆ แต่ไม่คลิมั่วเนียนๆ เอาไว้เล่นเดิมพันสบาย', badge: 'NEW', image: '/images/8.jpg', soldCount: 2 },
-      { name: 'Macro FreeFire', category: 'FreeFire', price: 59, description: 'ลากหัวลั่นๆ ร้านแรกในไทยที่นำมาขาย', badge: 'NEW', image: '/images/10.jpg', soldCount: 1 }
-    ]);
-    console.log('✅ เพิ่มสินค้าเริ่มต้นเรียบร้อยแล้ว!');
-  } else {
-    console.log(`✅ พบสินค้าในระบบ ${count} รายการ (ไม่ต้องรีเซ็ตยอดขาย)`);
-  }
-}
+// ==========================================
+// 🟢 API สำหรับ Admin ดึงรายชื่อลูกค้า และ จัดการเงิน 
+// ==========================================
 
 app.get('/api/admin/stats', verifyToken, verifyAdmin, async (req, res) => {
   const usersCount = await User.countDocuments();
   const orders = await Order.find().sort({ createdAt: -1 }).limit(10);
   const totalSales = await Order.aggregate([{ $group: { _id: null, total: { $sum: "$price" } } }]);
   res.json({ usersCount, recentOrders: orders, totalSales: totalSales[0]?.total || 0 });
+});
+
+// 🟢 ดึงข้อมูลผู้ใช้ทั้งหมดเพื่อโชว์ในตาราง
+app.get('/api/admin/users', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    // ซ่อนพาสเวิร์ดไม่ให้ส่งไปหน้าบ้าน
+    const users = await User.find().select('-password').sort({ createdAt: -1 });
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ message: 'ไม่สามารถโหลดข้อมูลผู้ใช้ได้' });
+  }
+});
+
+// 🟢 อัปเดตเงิน (เพิ่ม/ลด)
+app.post('/api/admin/users/balance', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { userId, amount, action } = req.body;
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: 'ไม่พบผู้ใช้' });
+
+    const numAmount = parseFloat(amount);
+    if (action === 'add') {
+      user.balance += numAmount;
+    } else if (action === 'subtract') {
+      user.balance = Math.max(0, user.balance - numAmount); // ป้องกันเงินติดลบ
+    }
+    
+    await user.save();
+    res.json({ success: true, message: `อัปเดตยอดเงินให้ ${user.username}#${user.tag} เป็น ฿${user.balance} สำเร็จ!` });
+  } catch (err) {
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการอัปเดตยอดเงิน' });
+  }
 });
 
 app.post('/api/admin/add-keys', verifyToken, verifyAdmin, async (req, res) => {
@@ -492,10 +503,48 @@ app.post('/api/admin/add-keys', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
+async function initializeData() {
+  const count = await Product.countDocuments();
+  if (count === 0) {
+    await Product.insertMany([
+      { name: 'Fast Loot', category: 'PUBG PC', price: 79, description: 'เก็บของไวใช้ได้กับหน้าจอ 1920x1080 กับ 1728x1080 เท่านั้น', badge: 'HOT', image: '/images/1.gif' , soldCount: 11 },
+      { name: 'Macro External', category: 'PUBG PC', price: 149, description: 'ใช้งานผ่านเว็บไซต์ สามารถปรับความแรงในการดึงมาโครได้ตามอิสระ', badge: 'NEW', image: '/images/4.jpg', soldCount: 5 },
+      { name: 'Macro ALLMOUSE', category: 'PUBG PC', price: 199, description: 'สามารถใช้ได้กับเมาส์ทุกชนิด และมีตั้งค่าสำหรับDPI 400/800/1600', badge: 'HOT', image: '/images/2.gif', soldCount: 74 },
+      { name: 'Special Pack', category: 'PUBG PC', price: 229, description: 'จะได้ตัวALLMOUSE พร้อมกับFAST LOOT คุ้มสุดๆ!!', badge: 'HOT', image: '/images/3.jpg', soldCount: 78 },
+      { name: 'CMD SOCIETY', category: 'FIVEM', price: 29, description: 'ค่าขาว 100%', image: '/images/5.jpg', soldCount: 11 },
+      { name: 'RESHADE&ROAD SOCIETY', category: 'FIVEM', price: 20, description: 'มีReshadeมากกว่า 200+ PRESET', image: '/images/6.jpg', soldCount: 1 },
+      { name: 'SYSTEM TUNING PERFORMANCE', category: 'FIVEM', price: 5, description: 'ช่วยปรับค่าเน็ต และปรับค่าต่างๆในวินโด้ให้มีประสิทธิภาพมากขึ้น', badge: 'NEW', image: '/images/7.jpg', soldCount: 7 },
+      { name: 'SOCIETYXSHOP - PC Optimizer (จูนคอมลดดีเลย์)', category: 'FIVEM', price: 15, description: 'ปลดล็อกขีดจำกัด PC ดัน FPS ลดปิง แก้เมาส์หน่วง... จบในคลิกเดียว! ค่าร้านดัง', image: '/images/9.jpg', soldCount: 8 },
+      { name: 'SOCIETYXSHOP - สั่งคลิ', category: 'FIVEM', price: 45, description: 'สั่งคลิลั่นๆ แต่ไม่คลิมั่วเนียนๆ เอาไว้เล่นเดิมพันสบาย', badge: 'NEW', image: '/images/8.jpg', soldCount: 2 },
+      { name: 'Macro FreeFire', category: 'FreeFire', price: 59, description: 'ลากหัวลั่นๆ ร้านแรกในไทยที่นำมาขาย', badge: 'NEW', image: '/images/10.jpg', soldCount: 1 }
+    ]);
+    console.log('✅ เพิ่มสินค้าเริ่มต้นเรียบร้อยแล้ว!');
+  } else {
+    console.log(`✅ พบสินค้าในระบบ ${count} รายการ (ไม่ต้องรีเซ็ตยอดขาย)`);
+  }
+}
+
+// 🟢 ฟังก์ชันเสก Tag ให้ลูกค้าเก่าอัตโนมัติ (รันตอนเปิดเซิร์ฟ)
+async function migrateUserTags() {
+  try {
+    const usersWithoutTag = await User.find({ tag: null });
+    if (usersWithoutTag.length > 0) {
+      for (let user of usersWithoutTag) {
+        user.tag = Math.floor(1000 + Math.random() * 9000).toString();
+        await user.save();
+      }
+      console.log(`✅ [Migration] สุ่มเสก Tag ให้ลูกค้าเก่าจำนวน ${usersWithoutTag.length} คนเรียบร้อยแล้ว!`);
+    }
+  } catch(err) { 
+    console.log('❌ เกิดข้อผิดพลาดตอนอัปเดตแท็กลูกค้าเก่า', err); 
+  }
+}
+
 const PORT = process.env.PORT || 5000;
 
 // 🟢 บังคับให้ Server รันบน 0.0.0.0 เพื่อให้ Render และ WebSocket เชื่อมต่อภายนอกได้
 server.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   await initializeData();
+  await migrateUserTags(); // 👈 ให้รันระบบเช็กลูกค้าเก่าทันทีที่เซิร์ฟเวอร์เปิด
 });

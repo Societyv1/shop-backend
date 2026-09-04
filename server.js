@@ -94,6 +94,15 @@ const refillSchema = new mongoose.Schema({
   date: { type: Date, default: Date.now }
 });
 
+const promoCodeSchema = new mongoose.Schema({
+  code: { type: String, unique: true, required: true },
+  bonusAmount: { type: Number, required: true }, // จำนวนเงินโบนัสที่จะบวกเพิ่มให้
+  maxUses: { type: Number, default: 100 },      // จำนวนครั้งที่ใช้ได้สูงสุด
+  usedCount: { type: Number, default: 0 },      // จำนวนครั้งที่มีคนใช้ไปแล้ว
+  isActive: { type: Boolean, default: true }
+});
+const PromoCode = mongoose.model('PromoCode', promoCodeSchema);
+
 const orderSchema = new mongoose.Schema({
   userId: mongoose.Schema.Types.ObjectId,
   productName: String, price: Number, licenseKey: { type: String, default: null },
@@ -180,8 +189,53 @@ const transporter = nodemailer.createTransport({
   }
 });
 
+// 🟢 API ตรวจสอบและใช้โค้ดเติมเงินรับโบนัส
+app.post('/api/refill/redeem-code', verifyToken, async (req, res) => {
+  try {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ message: 'กรุณากรอกโค้ดส่วนลด' });
+
+    const promo = await PromoCode.findOne({ code: code.trim().toUpperCase(), isActive: true });
+    if (!promo) return res.status(400).json({ message: '❌ โค้ดนี้ไม่ถูกต้อง หรือหมดอายุแล้ว' });
+
+    if (promo.usedCount >= promo.maxUses) {
+      return res.status(400).json({ message: '❌ โค้ดนี้ถูกใช้งานครบจำนวนจำกัดแล้ว' });
+    }
+
+    // เช็กว่าผู้ใช้นี้เคยใช้โค้ดนี้หรือยัง (กันคนใช้ซ้ำ)
+    // สามารถสร้างเก็บประวัติการใช้เพิ่มได้ แต่เบื้องต้นบวกเงินให้เลย
+    const user = await User.findById(req.userId);
+    user.balance += promo.bonusAmount;
+    promo.usedCount += 1;
+    await promo.save();
+    await user.save();
+
+    sendDiscordAlert("🎟️ มีการใช้โค้ดเติมเงิน!", `**ผู้ใช้:** ${user.username}#${user.tag || '0000'}\n**โค้ด:** \`${promo.code}\`\n**ได้รับโบนัสเพิ่ม:** ฿${promo.bonusAmount}\n**ยอดเงินปัจจุบัน:** ฿${user.balance.toFixed(2)}`, 65280);
+
+    res.json({ success: true, newBalance: user.balance, bonus: promo.bonusAmount, message: `✓ ใช้โค้ดสำเร็จ! รับเงินโบนัสเพิ่ม ฿${promo.bonusAmount}` });
+  } catch (err) {
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการใช้โค้ด' });
+  }
+});
+
+// 👑 API สำหรับแอดมินสร้างโค้ดเติมเงินใหม่
+app.post('/api/admin/promo-codes', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { code, bonusAmount, maxUses } = req.body;
+    const newPromo = new PromoCode({
+      code: code.trim().toUpperCase(),
+      bonusAmount: parseFloat(bonusAmount),
+      maxUses: maxUses ? parseInt(maxUses) : 100
+    });
+    await newPromo.save();
+    res.json({ success: true, message: `สร้างโค้ด ${newPromo.code} (โบนัส ฿${newPromo.bonusAmount}) สำเร็จ!` });
+  } catch (err) {
+    res.status(500).json({ message: 'โค้ดนี้มีอยู่ในระบบแล้ว หรือเกิดข้อผิดพลาด' });
+  }
+});
+
 // ==========================================
-// 🛡️ ระบบตรวจสอบสลิป AI (Production V8 - โหมดสมดุล อ่านครบทุกบรรทัด)
+// 🛡️ ระบบตรวจสอบสลิป AI 
 // ==========================================
 async function verifySlip(imageBuffer, expectedAmount) {
   try {

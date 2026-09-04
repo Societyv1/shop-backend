@@ -1,4 +1,3 @@
-// server.js - SOCIETYXSHOP Backend
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
@@ -13,9 +12,20 @@ const qrcode = require('qrcode');
 const dotenv = require('dotenv');
 const nodemailer = require('nodemailer');
 
+// 🟢 นำเข้า http และ socket.io สำหรับทำ Real-time
+const http = require('http');
+const { Server } = require('socket.io');
+
 dotenv.config();
 
 const app = express();
+const server = http.createServer(app); // 🟢 สร้าง HTTP Server จาก Express
+const io = new Server(server, {        // 🟢 เปิดใช้งาน Socket.io
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
+});
 
 // ==========================================
 // 🚨🚨 1. เอา URL DISCORD WEBHOOK มาวางในเครื่องหมายคำพูดข้างล่างนี้ครับ 🚨🚨
@@ -385,16 +395,38 @@ app.post('/api/orders', verifyToken, async (req, res) => {
     const order = new Order({ userId: user._id, productName, price, licenseKey: assignedKey, status: 'completed' });
     await order.save();
 
+    // 🟢 ระบบอัปเดตยอดขาย และแจ้งเตือนแบบ Real-time
+    let updatedProduct = null;
     if (productId) {
-      await Product.findByIdAndUpdate(productId, { $inc: { soldCount: 1 } });
+      // อัปเดตยอดขายบวก 1 และดึงข้อมูลใหม่มา
+      updatedProduct = await Product.findByIdAndUpdate(
+        productId, 
+        { $inc: { soldCount: 1 } },
+        { new: true }
+      );
+    } else if (productName) {
+      // เผื่อหน้าบ้านส่งมาแค่ชื่อ
+      updatedProduct = await Product.findOneAndUpdate(
+        { name: productName }, 
+        { $inc: { soldCount: 1 } },
+        { new: true }
+      );
     }
 
-    // 📢 ยิงแจ้งเตือน Discord (เพิ่มรหัสคำสั่งซื้อ + คีย์ถ้ามี)
+    // 🟢 ส่งข้อมูลไปยัง Client ทุกคนที่เปิดเว็บอยู่ให้ตัวเลขเด้งขึ้นเอง
+    if (updatedProduct) {
+      io.emit('productSold', {
+        productId: updatedProduct._id,
+        productName: updatedProduct.name,
+        newSoldCount: updatedProduct.soldCount
+      });
+    }
+
+    // 📢 ยิงแจ้งเตือน Discord
     let discordMsg = `**รหัสคำสั่งซื้อ:** \`#${order._id}\`\n**ผู้ซื้อ:** ${user.username}\n**สินค้า:** ${productName}\n**ราคา:** ฿${price.toFixed(2)}`;
     if (assignedKey) {
       discordMsg += `\n**License Key:** \`${assignedKey}\``;
     }
-
     sendDiscordAlert("🛒 ออเดอร์ใหม่เข้าแล้ว!", discordMsg, 16766720);
 
     res.json({ message: 'สั่งซื้อสำเร็จ', orderId: order._id, licenseKey: assignedKey, newBalance: user.balance });
@@ -402,21 +434,26 @@ app.post('/api/orders', verifyToken, async (req, res) => {
 });
 
 async function initializeData() {
-  await Product.deleteMany({}); 
-  await Product.insertMany([
-    { name: 'Fast Loot', category: 'PUBG PC', price: 79, description: 'เก็บของไวใช้ได้กับหน้าจอ 1920x1080 กับ 1728x1080 เท่านั้น', badge: 'HOT', image: '/images/1.gif' , soldCount: 11 },
-    { name: 'Macro External', category: 'PUBG PC', price: 149, description: 'ใช้งานผ่านเว็บไซต์ สามารถปรับความแรงในการดึงมาโครได้ตามอิสระ', badge: 'NEW', image: '/images/4.jpg', soldCount: 5 },
-    { name: 'Macro ALLMOUSE', category: 'PUBG PC', price: 199, description: 'สามารถใช้ได้กับเมาส์ทุกชนิด และมีตั้งค่าสำหรับDPI 400/800/1600', badge: 'HOT', image: '/images/2.gif', soldCount: 74 },
-    { name: 'Special Pack', category: 'PUBG PC', price: 229, description: 'จะได้ตัวALLMOUSE พร้อมกับFAST LOOT คุ้มสุดๆ!!', badge: 'HOT', image: '/images/3.jpg', soldCount: 78 },
-    { name: 'CMD SOCIETY', category: 'FIVEM', price: 29, description: 'ค่าขาว 100%', image: '/images/5.jpg', soldCount: 11 },
-    { name: 'RESHADE&ROAD SOCIETY', category: 'FIVEM', price: 20, description: 'มีReshadeมากกว่า 200+ PRESET', image: '/images/6.jpg', soldCount: 1 },
-    { name: 'SYSTEM TUNING PERFORMANCE', category: 'FIVEM', price: 5, description: 'ช่วยปรับค่าเน็ต และปรับค่าต่างๆในวินโด้ให้มีประสิทธิภาพมากขึ้น', badge: 'NEW', image: '/images/7.jpg', soldCount: 7 },
-    { name: 'SOCIETYXSHOP - PC Optimizer (จูนคอมลดดีเลย์)', category: 'FIVEM', price: 15, description: 'ปลดล็อกขีดจำกัด PC ดัน FPS ลดปิง แก้เมาส์หน่วง... จบในคลิกเดียว! ค่าร้านดัง', image: '/images/9.jpg', soldCount: 8 },
-    { name: 'SOCIETYXSHOP - สั่งคลิ', category: 'FIVEM', price: 45, description: 'สั่งคลิลั่นๆ แต่ไม่คลิมั่วเนียนๆ เอาไว้เล่นเดิมพันสบาย', badge: 'NEW', image: '/images/8.jpg', soldCount: 2 },
-    { name: 'Macro FreeFire', category: 'FreeFire', price: 59, description: 'ลากหัวลั่นๆ ร้านแรกในไทยที่นำมาขาย', badge: 'NEW', image: '/images/10.jpg', soldCount: 1 }
- 
-  ]);
-  console.log('✅ รีเซ็ตและอัปเดตสินค้า (เพิ่มรูปภาพ) เรียบร้อยแล้ว!');
+  const count = await Product.countDocuments();
+  // 🟢 เช็คก่อนว่ามีสินค้าหรือยัง ถ้ายังไม่มี(นับได้ 0) ค่อยเพิ่มข้อมูล
+  // วิธีนี้ทำให้ยอดขายที่บวกไปแล้ว ไม่หายตอนรีสตาร์ทเซิร์ฟเวอร์
+  if (count === 0) {
+    await Product.insertMany([
+      { name: 'Fast Loot', category: 'PUBG PC', price: 79, description: 'เก็บของไวใช้ได้กับหน้าจอ 1920x1080 กับ 1728x1080 เท่านั้น', badge: 'HOT', image: '/images/1.gif' , soldCount: 11 },
+      { name: 'Macro External', category: 'PUBG PC', price: 149, description: 'ใช้งานผ่านเว็บไซต์ สามารถปรับความแรงในการดึงมาโครได้ตามอิสระ', badge: 'NEW', image: '/images/4.jpg', soldCount: 5 },
+      { name: 'Macro ALLMOUSE', category: 'PUBG PC', price: 199, description: 'สามารถใช้ได้กับเมาส์ทุกชนิด และมีตั้งค่าสำหรับDPI 400/800/1600', badge: 'HOT', image: '/images/2.gif', soldCount: 74 },
+      { name: 'Special Pack', category: 'PUBG PC', price: 229, description: 'จะได้ตัวALLMOUSE พร้อมกับFAST LOOT คุ้มสุดๆ!!', badge: 'HOT', image: '/images/3.jpg', soldCount: 78 },
+      { name: 'CMD SOCIETY', category: 'FIVEM', price: 29, description: 'ค่าขาว 100%', image: '/images/5.jpg', soldCount: 11 },
+      { name: 'RESHADE&ROAD SOCIETY', category: 'FIVEM', price: 20, description: 'มีReshadeมากกว่า 200+ PRESET', image: '/images/6.jpg', soldCount: 1 },
+      { name: 'SYSTEM TUNING PERFORMANCE', category: 'FIVEM', price: 5, description: 'ช่วยปรับค่าเน็ต และปรับค่าต่างๆในวินโด้ให้มีประสิทธิภาพมากขึ้น', badge: 'NEW', image: '/images/7.jpg', soldCount: 7 },
+      { name: 'SOCIETYXSHOP - PC Optimizer (จูนคอมลดดีเลย์)', category: 'FIVEM', price: 15, description: 'ปลดล็อกขีดจำกัด PC ดัน FPS ลดปิง แก้เมาส์หน่วง... จบในคลิกเดียว! ค่าร้านดัง', image: '/images/9.jpg', soldCount: 8 },
+      { name: 'SOCIETYXSHOP - สั่งคลิ', category: 'FIVEM', price: 45, description: 'สั่งคลิลั่นๆ แต่ไม่คลิมั่วเนียนๆ เอาไว้เล่นเดิมพันสบาย', badge: 'NEW', image: '/images/8.jpg', soldCount: 2 },
+      { name: 'Macro FreeFire', category: 'FreeFire', price: 59, description: 'ลากหัวลั่นๆ ร้านแรกในไทยที่นำมาขาย', badge: 'NEW', image: '/images/10.jpg', soldCount: 1 }
+    ]);
+    console.log('✅ เพิ่มสินค้าเริ่มต้นเรียบร้อยแล้ว!');
+  } else {
+    console.log(`✅ พบสินค้าในระบบ ${count} รายการ (ไม่ต้องรีเซ็ตยอดขาย)`);
+  }
 }
 
 app.get('/api/admin/stats', verifyToken, verifyAdmin, async (req, res) => {
@@ -448,7 +485,8 @@ app.post('/api/admin/add-keys', verifyToken, verifyAdmin, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, async () => {
+// 🟢 เปลี่ยนจาก app.listen เป็น server.listen เพื่อให้ Socket.io ทำงานคู่กัน
+server.listen(PORT, async () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   await initializeData();
 });

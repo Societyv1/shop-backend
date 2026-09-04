@@ -99,51 +99,15 @@ const promoCodeSchema = new mongoose.Schema({
   bonusAmount: { type: Number, required: true },
   maxUses: { type: Number, default: 100 },
   usedCount: { type: Number, default: 0 },
-  usedByUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // 🟢 เพิ่มฟิลด์เก็บรายชื่อคนที่เคยใช้แล้ว
+  usedByUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // 🟢 เก็บรายชื่อไอดีที่ใช้แล้ว
   isActive: { type: Boolean, default: true }
 });
-const PromoCode = mongoose.model('PromoCode', promoCodeSchema);
 
 const orderSchema = new mongoose.Schema({
   userId: mongoose.Schema.Types.ObjectId,
   productName: String, price: Number, licenseKey: { type: String, default: null },
   status: { type: String, enum: ['pending', 'completed'], default: 'pending' },
   createdAt: { type: Date, default: Date.now }
-});
-
-app.post('/api/refill/redeem-code', verifyToken, async (req, res) => {
-  try {
-    const { code } = req.body;
-    if (!code) return res.status(400).json({ message: 'กรุณากรอกโค้ดส่วนลด' });
-
-    const promo = await PromoCode.findOne({ code: code.trim().toUpperCase(), isActive: true });
-    if (!promo) return res.status(400).json({ message: '❌ โค้ดนี้ไม่ถูกต้อง หรือหมดอายุแล้ว' });
-
-    // 🛑 เช็กว่าไอดีนี้เคยใช้โค้ดนี้ไปแล้วหรือยัง
-    if (promo.usedByUsers.includes(req.userId)) {
-      return res.status(400).json({ message: '❌ คุณได้ใช้โค้ดนี้ไปแล้ว ไม่สามารถใช้ซ้ำได้อีก' });
-    }
-
-    if (promo.usedCount >= promo.maxUses) {
-      return res.status(400).json({ message: '❌ โค้ดนี้ถูกใช้งานครบจำนวนจำกัดแล้ว' });
-    }
-
-    const user = await User.findById(req.userId);
-    user.balance += promo.bonusAmount;
-    
-    // บันทึกว่าไอดีนี้ใช้แล้ว และเพิ่มจำนวนคนใช้
-    promo.usedByUsers.push(user._id);
-    promo.usedCount += 1;
-
-    await promo.save();
-    await user.save();
-
-    sendDiscordAlert("🎟️ มีการใช้โค้ดเติมเงิน!", `**ผู้ใช้:** ${user.username}#${user.tag || '0000'}\n**โค้ด:** \`${promo.code}\`\n**ได้รับโบนัสเพิ่ม:** ฿${promo.bonusAmount}\n**ยอดเงินปัจจุบัน:** ฿${user.balance.toFixed(2)}`, 65280);
-
-    res.json({ success: true, newBalance: user.balance, bonus: promo.bonusAmount, message: `✓ ใช้โค้ดสำเร็จ! รับเงินโบนัสเพิ่ม ฿${promo.bonusAmount}` });
-  } catch (err) {
-    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการใช้โค้ด' });
-  }
 });
 
 const keySchema = new mongoose.Schema({
@@ -156,42 +120,11 @@ const keySchema = new mongoose.Schema({
 const User = mongoose.model('User', userSchema);
 const Product = mongoose.model('Product', productSchema);
 const Refill = mongoose.model('Refill', refillSchema);
+const PromoCode = mongoose.model('PromoCode', promoCodeSchema);
 const Order = mongoose.model('Order', orderSchema);
 const Key = mongoose.model('Key', keySchema);
 
-// ===== SEED KEYS =====
-const initialKeys = [
-  "Societyx-y5qwbL", "Societyx-mynlCs", "Societyx-LX7FQd", "Societyx-IUMSgm", "Societyx-L7iN1O",
-  "Societyx-PcZ0EN", "Societyx-Cy61xR", "Societyx-88dICw", "Societyx-JH50EE", "Societyx-gMkmn0",
-  "Societyx-m8FuLf", "Societyx-bZ5Tox", "Societyx-c1MdYO", "Societyx-ExhhuK", "Societyx-7CMC17",
-  "Societyx-xqesNN", "Societyx-Au15EP", "Societyx-DZofUT", "Societyx-mci1Bz", "Societyx-86KjT0",
-  "Societyx-JMKZUH", "Societyx-x5tXSa", "Societyx-FdssEx", "Societyx-edfA2P", "Societyx-tjIIRK",
-  "Societyx-XZBIkK", "Societyx-1qmqfH", "Societyx-B6Nv77", "Societyx-sDimT2", "Societyx-SodEaz",
-  "Societyx-rkkrID", "Societyx-vxLb4Y", "Societyx-PQks30", "Societyx-cK2Jqm", "Societyx-x5sBVR",
-  "Societyx-756VXk", "Societyx-c30lGU", "Societyx-D8jXDC", "Societyx-kZdPwM", "Societyx-nuWJ6W",
-  "Societyx-JHf7HD", "Societyx-x1nKW8", "Societyx-mnX1Ui", "Societyx-APOrSF", "Societyx-u1tkyL",
-  "Societyx-82ygPU", "Societyx-UElYS2", "Societyx-K20ORz", "Societyx-48zFSg", "Societyx-8FQvRs",
-  "Societyx-yoeJ68", "Societyx-a7GmFW", "Societyx-26kb61", "Societyx-g9sBSG", "Societyx-rJ9Eq9",
-  "Societyx-YVwcUD", "Societyx-mYmxsi", "Societyx-gHT9Bd", "Societyx-TGyHFZ", "Societyx-6iEEMS",
-  "Societyx-YWXgbU", "Societyx-t2dgFv", "Societyx-uHmm6m", "Societyx-qLeNKT", "Societyx-lubbBe",
-  "Societyx-0Nr4wp", "Societyx-KHwbcL", "Societyx-wM4OgX", "Societyx-h7On2b", "Societyx-E2iCc2",
-  "Societyx-BVMQ4G", "Societyx-1F1d8h", "Societyx-fPKZJu", "Societyx-eT9GKR", "Societyx-cl3zrk",
-  "Societyx-Inh0kX", "Societyx-vcr3sD", "Societyx-tXBZUr", "Societyx-VtmL45", "Societyx-pGZpid",
-  "Societyx-ztInds", "Societyx-JLynYC", "Societyx-Rr3iLN", "Societyx-DBDWZt", "Societyx-evCe2S",
-  "Societyx-OUoRvh", "Societyx-kdG5Fb", "Societyx-uSu4WO", "Societyx-AaJC7N", "Societyx-XLI2Gh",
-  "Societyx-92An7i", "Societyx-HjevJ0", "Societyx-QqcYVC", "Societyx-dnECbZ", "Societyx-55Ur5m",
-  "Societyx-cBu94w", "Societyx-uHZTew"
-];
-
-async function seedDatabaseKeys() {
-  const count = await Key.countDocuments();
-  if (count === 0) {
-    await Key.insertMany(initialKeys.map(k => ({ productName: 'CMD SOCIETY', keyText: k })));
-    console.log(`✅ เสกคีย์ CMD จำนวน ${initialKeys.length} อัน เรียบร้อย!`);
-  }
-}
-seedDatabaseKeys();
-
+// ===== AUTH MIDDLEWARES (ต้องวางไว้ก่อนเส้นทาง API ทั้งหมด) =====
 const verifyToken = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ message: 'ไม่พบ token' });
@@ -225,50 +158,38 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// 🟢 API ตรวจสอบและใช้โค้ดเติมเงินรับโบนัส
-app.post('/api/refill/redeem-code', verifyToken, async (req, res) => {
-  try {
-    const { code } = req.body;
-    if (!code) return res.status(400).json({ message: 'กรุณากรอกโค้ดส่วนลด' });
+// ===== SEED KEYS =====
+const initialKeys = [
+  "Societyx-y5qwbL", "Societyx-mynlCs", "Societyx-LX7FQd", "Societyx-IUMSgm", "Societyx-L7iN1O",
+  "Societyx-PcZ0EN", "Societyx-Cy61xR", "Societyx-88dICw", "Societyx-JH50EE", "Societyx-gMkmn0",
+  "Societyx-m8FuLf", "Societyx-bZ5Tox", "Societyx-c1MdYO", "Societyx-ExhhuK", "Societyx-7CMC17",
+  "Societyx-xqesNN", "Societyx-Au15EP", "Societyx-DZofUT", "Societyx-mci1Bz", "Societyx-86KjT0",
+  "Societyx-JMKZUH", "Societyx-x5tXSa", "Societyx-FdssEx", "Societyx-edfA2P", "Societyx-tjIIRK",
+  "Societyx-XZBIkK", "Societyx-1qmqfH", "Societyx-B6Nv77", "Societyx-sDimT2", "Societyx-SodEaz",
+  "Societyx-rkkrID", "Societyx-vxLb4Y", "Societyx-PQks30", "Societyx-cK2Jqm", "Societyx-x5sBVR",
+  "Societyx-756VXk", "Societyx-c30lGU", "Societyx-D8jXDC", "Societyx-kZdPwM", "Societyx-nuWJ6W",
+  "Societyx-JHf7HD", "Societyx-x1nKW8", "Societyx-mnX1Ui", "Societyx-APOrSF", "Societyx-u1tkyL",
+  "Societyx-82ygPU", "Societyx-UElYS2", "Societyx-K20ORz", "Societyx-48zFSg", "Societyx-8FQvRs",
+  "Societyx-yoeJ68", "Societyx-a7GmFW", "Societyx-26kb61", "Societyx-g9sBSG", "Societyx-rJ9Eq9",
+  "Societyx-YVwcUD", "Societyx-mYmxsi", "Societyx-gHT9Bd", "Societyx-TGyHFZ", "Societyx-6iEEMS",
+  "Societyx-YWXgbU", "Societyx-t2dgFv", "Societyx-uHmm6m", "Societyx-qLeNKT", "Societyx-lubbBe",
+  "Societyx-0Nr4wp", "Societyx-KHwbcL", "Societyx-wM4OgX", "Societyx-h7On2b", "Societyx-E2iCc2",
+  "Societyx-BVMQ4G", "Societyx-1F1d8h", "Societyx-fPKZJu", "Societyx-eT9GKR", "Societyx-cl3zrk",
+  "Societyx-Inh0kX", "Societyx-vcr3sD", "Societyx-tXBZUr", "Societyx-VtmL45", "Societyx-pGZpid",
+  "Societyx-ztInds", "Societyx-JLynYC", "Societyx-Rr3iLN", "Societyx-DBDWZt", "Societyx-evCe2S",
+  "Societyx-OUoRvh", "Societyx-kdG5Fb", "Societyx-uSu4WO", "Societyx-AaJC7N", "Societyx-XLI2Gh",
+  "Societyx-92An7i", "Societyx-HjevJ0", "Societyx-QqcYVC", "Societyx-dnECbZ", "Societyx-55Ur5m",
+  "Societyx-cBu94w", "Societyx-uHZTew"
+];
 
-    const promo = await PromoCode.findOne({ code: code.trim().toUpperCase(), isActive: true });
-    if (!promo) return res.status(400).json({ message: '❌ โค้ดนี้ไม่ถูกต้อง หรือหมดอายุแล้ว' });
-
-    if (promo.usedCount >= promo.maxUses) {
-      return res.status(400).json({ message: '❌ โค้ดนี้ถูกใช้งานครบจำนวนจำกัดแล้ว' });
-    }
-
-    // เช็กว่าผู้ใช้นี้เคยใช้โค้ดนี้หรือยัง (กันคนใช้ซ้ำ)
-    // สามารถสร้างเก็บประวัติการใช้เพิ่มได้ แต่เบื้องต้นบวกเงินให้เลย
-    const user = await User.findById(req.userId);
-    user.balance += promo.bonusAmount;
-    promo.usedCount += 1;
-    await promo.save();
-    await user.save();
-
-    sendDiscordAlert("🎟️ มีการใช้โค้ดเติมเงิน!", `**ผู้ใช้:** ${user.username}#${user.tag || '0000'}\n**โค้ด:** \`${promo.code}\`\n**ได้รับโบนัสเพิ่ม:** ฿${promo.bonusAmount}\n**ยอดเงินปัจจุบัน:** ฿${user.balance.toFixed(2)}`, 65280);
-
-    res.json({ success: true, newBalance: user.balance, bonus: promo.bonusAmount, message: `✓ ใช้โค้ดสำเร็จ! รับเงินโบนัสเพิ่ม ฿${promo.bonusAmount}` });
-  } catch (err) {
-    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการใช้โค้ด' });
+async function seedDatabaseKeys() {
+  const count = await Key.countDocuments();
+  if (count === 0) {
+    await Key.insertMany(initialKeys.map(k => ({ productName: 'CMD SOCIETY', keyText: k })));
+    console.log(`✅ เสกคีย์ CMD จำนวน ${initialKeys.length} อัน เรียบร้อย!`);
   }
-});
-
-// 👑 API สำหรับแอดมินสร้างโค้ดเติมเงินใหม่
-app.post('/api/admin/promo-codes', verifyToken, verifyAdmin, async (req, res) => {
-  try {
-    const { code, bonusAmount, maxUses } = req.body;
-    const newPromo = new PromoCode({
-      code: code.trim().toUpperCase(),
-      bonusAmount: parseFloat(bonusAmount),
-      maxUses: maxUses ? parseInt(maxUses) : 100
-    });
-    await newPromo.save();
-    res.json({ success: true, message: `สร้างโค้ด ${newPromo.code} (โบนัส ฿${newPromo.bonusAmount}) สำเร็จ!` });
-  } catch (err) {
-    res.status(500).json({ message: 'โค้ดนี้มีอยู่ในระบบแล้ว หรือเกิดข้อผิดพลาด' });
-  }
-});
+}
+seedDatabaseKeys();
 
 // ==========================================
 // 🛡️ ระบบตรวจสอบสลิป AI 
@@ -329,13 +250,11 @@ app.post('/api/auth/signup', async (req, res) => {
     const { username, email, password } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    // 🟢 สุ่มแท็ก 4 หลัก
     const tag = Math.floor(1000 + Math.random() * 9000).toString();
     
     const newUser = new User({ username, tag, email, password: hashedPassword });
     await newUser.save();
 
-    // 📢 ยิงแจ้งเตือน Discord โชว์ Tag ด้วย
     sendDiscordAlert("✨ สมาชิกใหม่เข้าร่วมร้าน!", `**Username:** ${username}#${tag}\n**Email:** ${email}`, 3066993);
 
     const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET || 'your-secret-key');
@@ -452,7 +371,6 @@ app.post('/api/refill/verify', verifyToken, upload.single('slip'), async (req, r
     const refill = new Refill({ userId: req.userId, amount: amount, status: 'verified', qrPayload: slipResult.payload, slipImage: 'uploaded' });
     await refill.save();
 
-    // 📢 ยิงแจ้งเตือน Discord อัปเดตให้มี Tag
     sendDiscordAlert("💰 มีการโอนเงินเข้าสู่ระบบ!", `**ผู้ใช้:** ${user.username}#${user.tag || '0000'}\n**ยอดเงิน:** ฿${amount.toFixed(2)}\n**ยอดเงินคงเหลือปัจจุบัน:** ฿${user.balance.toFixed(2)}`, 3447003);
 
     res.json({ success: true, newBalance: user.balance, message: `เติมเงินสำเร็จ! ยอด ${amount} บาท` });
@@ -461,6 +379,58 @@ app.post('/api/refill/verify', verifyToken, upload.single('slip'), async (req, r
 
 app.get('/api/refill/history', verifyToken, async (req, res) => {
   res.json(await Refill.find({ userId: req.userId }).sort({ date: -1 }));
+});
+
+// 🟢 API ตรวจสอบและใช้โค้ดเติมเงินรับโบนัส (ป้องกันใช้ซ้ำต่อ 1 บัญชี)
+app.post('/api/refill/redeem-code', verifyToken, async (req, res) => {
+  try {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ message: 'กรุณากรอกโค้ดส่วนลด' });
+
+    const promo = await PromoCode.findOne({ code: code.trim().toUpperCase(), isActive: true });
+    if (!promo) return res.status(400).json({ message: '❌ โค้ดนี้ไม่ถูกต้อง หรือหมดอายุแล้ว' });
+
+    // 🛑 เช็กว่าไอดีนี้เคยใช้โค้ดนี้ไปแล้วหรือยัง
+    if (promo.usedByUsers.includes(req.userId)) {
+      return res.status(400).json({ message: '❌ คุณได้ใช้โค้ดนี้ไปแล้ว ไม่สามารถใช้ซ้ำได้อีก' });
+    }
+
+    if (promo.usedCount >= promo.maxUses) {
+      return res.status(400).json({ message: '❌ โค้ดนี้ถูกใช้งานครบจำนวนจำกัดแล้ว' });
+    }
+
+    const user = await User.findById(req.userId);
+    user.balance += promo.bonusAmount;
+    
+    // บันทึกว่าไอดีนี้ใช้แล้ว และเพิ่มจำนวนคนใช้
+    promo.usedByUsers.push(user._id);
+    promo.usedCount += 1;
+
+    await promo.save();
+    await user.save();
+
+    sendDiscordAlert("🎟️ มีการใช้โค้ดเติมเงิน!", `**ผู้ใช้:** ${user.username}#${user.tag || '0000'}\n**โค้ด:** \`${promo.code}\`\n**ได้รับโบนัสเพิ่ม:** ฿${promo.bonusAmount}\n**ยอดเงินปัจจุบัน:** ฿${user.balance.toFixed(2)}`, 65280);
+
+    res.json({ success: true, newBalance: user.balance, bonus: promo.bonusAmount, message: `✓ ใช้โค้ดสำเร็จ! รับเงินโบนัสเพิ่ม ฿${promo.bonusAmount}` });
+  } catch (err) {
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการใช้โค้ด' });
+  }
+});
+
+// 👑 API สำหรับแอดมินสร้างโค้ดเติมเงินใหม่
+app.post('/api/admin/promo-codes', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { code, bonusAmount, maxUses } = req.body;
+    const newPromo = new PromoCode({
+      code: code.trim().toUpperCase(),
+      bonusAmount: parseFloat(bonusAmount),
+      maxUses: maxUses ? parseInt(maxUses) : 100
+    });
+    await newPromo.save();
+    res.json({ success: true, message: `สร้างโค้ด ${newPromo.code} (โบนัส ฿${newPromo.bonusAmount}) สำเร็จ!` });
+  } catch (err) {
+    res.status(500).json({ message: 'โค้ดนี้มีอยู่ในระบบแล้ว หรือเกิดข้อผิดพลาด' });
+  }
 });
 
 app.get('/api/orders', verifyToken, async (req, res) => {
@@ -487,7 +457,6 @@ app.post('/api/orders', verifyToken, async (req, res) => {
     const order = new Order({ userId: user._id, productName, price, licenseKey: assignedKey, status: 'completed' });
     await order.save();
 
-    // 🟢 ระบบอัปเดตยอดขาย และแจ้งเตือนแบบ Real-time
     let updatedProduct = null;
     if (productId) {
       updatedProduct = await Product.findByIdAndUpdate(
@@ -518,7 +487,6 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       });
     }
 
-    // 📢 ยิงแจ้งเตือน Discord ใส่ Tag
     let discordMsg = `**รหัสคำสั่งซื้อ:** \`#${order._id}\`\n**ผู้ซื้อ:** ${user.username}#${user.tag || '0000'}\n**สินค้า:** ${productName}\n**ราคา:** ฿${price.toFixed(2)}`;
     if (assignedKey) {
       discordMsg += `\n**License Key:** \`${assignedKey}\``;
@@ -540,10 +508,8 @@ app.get('/api/admin/stats', verifyToken, verifyAdmin, async (req, res) => {
   res.json({ usersCount, recentOrders: orders, totalSales: totalSales[0]?.total || 0 });
 });
 
-// 🟢 ดึงข้อมูลผู้ใช้ทั้งหมดเพื่อโชว์ในตาราง
 app.get('/api/admin/users', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    // ซ่อนพาสเวิร์ดไม่ให้ส่งไปหน้าบ้าน
     const users = await User.find().select('-password').sort({ createdAt: -1 });
     res.json(users);
   } catch (err) {
@@ -551,7 +517,6 @@ app.get('/api/admin/users', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-// 🟢 อัปเดตเงิน (เพิ่ม/ลด)
 app.post('/api/admin/users/balance', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { userId, amount, action } = req.body;
@@ -562,7 +527,7 @@ app.post('/api/admin/users/balance', verifyToken, verifyAdmin, async (req, res) 
     if (action === 'add') {
       user.balance += numAmount;
     } else if (action === 'subtract') {
-      user.balance = Math.max(0, user.balance - numAmount); // ป้องกันเงินติดลบ
+      user.balance = Math.max(0, user.balance - numAmount);
     }
     
     await user.save();
@@ -614,7 +579,6 @@ async function initializeData() {
   }
 }
 
-// 🟢 ฟังก์ชันเสก Tag ให้ลูกค้าเก่าอัตโนมัติ (รันตอนเปิดเซิร์ฟ)
 async function migrateUserTags() {
   try {
     const usersWithoutTag = await User.find({ tag: null });
@@ -632,9 +596,8 @@ async function migrateUserTags() {
 
 const PORT = process.env.PORT || 5000;
 
-// 🟢 บังคับให้ Server รันบน 0.0.0.0 เพื่อให้ Render และ WebSocket เชื่อมต่อภายนอกได้
 server.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   await initializeData();
-  await migrateUserTags(); // 👈 ให้รันระบบเช็กลูกค้าเก่าทันทีที่เซิร์ฟเวอร์เปิด
+  await migrateUserTags(); 
 });

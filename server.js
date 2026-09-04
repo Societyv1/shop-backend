@@ -429,6 +429,15 @@ app.post('/api/admin/announcements', verifyToken, verifyAdmin, async (req, res) 
   }
 });
 
+app.delete('/api/admin/announcements/:id', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    await Announcement.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: 'ลบประกาศสำเร็จ!' });
+  } catch (err) {
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการลบประกาศ' });
+  }
+});
+
 app.get('/api/user/promo-history', verifyToken, async (req, res) => {
   try {
     const usedPromos = await PromoCode.find({ usedByUsers: req.userId }).select('code bonusAmount expiresAt');

@@ -96,9 +96,10 @@ const refillSchema = new mongoose.Schema({
 
 const promoCodeSchema = new mongoose.Schema({
   code: { type: String, unique: true, required: true },
-  bonusAmount: { type: Number, required: true }, // จำนวนเงินโบนัสที่จะบวกเพิ่มให้
-  maxUses: { type: Number, default: 100 },      // จำนวนครั้งที่ใช้ได้สูงสุด
-  usedCount: { type: Number, default: 0 },      // จำนวนครั้งที่มีคนใช้ไปแล้ว
+  bonusAmount: { type: Number, required: true },
+  maxUses: { type: Number, default: 100 },
+  usedCount: { type: Number, default: 0 },
+  usedByUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // 🟢 เพิ่มฟิลด์เก็บรายชื่อคนที่เคยใช้แล้ว
   isActive: { type: Boolean, default: true }
 });
 const PromoCode = mongoose.model('PromoCode', promoCodeSchema);
@@ -108,6 +109,41 @@ const orderSchema = new mongoose.Schema({
   productName: String, price: Number, licenseKey: { type: String, default: null },
   status: { type: String, enum: ['pending', 'completed'], default: 'pending' },
   createdAt: { type: Date, default: Date.now }
+});
+
+app.post('/api/refill/redeem-code', verifyToken, async (req, res) => {
+  try {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ message: 'กรุณากรอกโค้ดส่วนลด' });
+
+    const promo = await PromoCode.findOne({ code: code.trim().toUpperCase(), isActive: true });
+    if (!promo) return res.status(400).json({ message: '❌ โค้ดนี้ไม่ถูกต้อง หรือหมดอายุแล้ว' });
+
+    // 🛑 เช็กว่าไอดีนี้เคยใช้โค้ดนี้ไปแล้วหรือยัง
+    if (promo.usedByUsers.includes(req.userId)) {
+      return res.status(400).json({ message: '❌ คุณได้ใช้โค้ดนี้ไปแล้ว ไม่สามารถใช้ซ้ำได้อีก' });
+    }
+
+    if (promo.usedCount >= promo.maxUses) {
+      return res.status(400).json({ message: '❌ โค้ดนี้ถูกใช้งานครบจำนวนจำกัดแล้ว' });
+    }
+
+    const user = await User.findById(req.userId);
+    user.balance += promo.bonusAmount;
+    
+    // บันทึกว่าไอดีนี้ใช้แล้ว และเพิ่มจำนวนคนใช้
+    promo.usedByUsers.push(user._id);
+    promo.usedCount += 1;
+
+    await promo.save();
+    await user.save();
+
+    sendDiscordAlert("🎟️ มีการใช้โค้ดเติมเงิน!", `**ผู้ใช้:** ${user.username}#${user.tag || '0000'}\n**โค้ด:** \`${promo.code}\`\n**ได้รับโบนัสเพิ่ม:** ฿${promo.bonusAmount}\n**ยอดเงินปัจจุบัน:** ฿${user.balance.toFixed(2)}`, 65280);
+
+    res.json({ success: true, newBalance: user.balance, bonus: promo.bonusAmount, message: `✓ ใช้โค้ดสำเร็จ! รับเงินโบนัสเพิ่ม ฿${promo.bonusAmount}` });
+  } catch (err) {
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการใช้โค้ด' });
+  }
 });
 
 const keySchema = new mongoose.Schema({

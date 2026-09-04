@@ -493,8 +493,9 @@ app.post('/api/admin/add-keys', verifyToken, verifyAdmin, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-// 🟢 เปลี่ยนจาก app.listen เป็น server.listen เพื่อให้ Socket.io ทำงานคู่กัน
-server.listen(PORT, async () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+
+// 🟢 บังคับให้ Server รันบน 0.0.0.0 เพื่อให้ Render และ WebSocket เชื่อมต่อภายนอกได้
+server.listen(PORT, '0.0.0.0', async () => {
+  console.log(`🚀 Server running on port ${PORT}`);
   await initializeData();
 });

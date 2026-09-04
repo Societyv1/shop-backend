@@ -415,10 +415,18 @@ app.post('/api/orders', verifyToken, async (req, res) => {
 
     // 🟢 ส่งข้อมูลไปยัง Client ทุกคนที่เปิดเว็บอยู่ให้ตัวเลขเด้งขึ้นเอง
     if (updatedProduct) {
+      // เซ็นเซอร์ชื่อผู้ซื้อ (เช่น copterkk -> co****kk)
+      const buyerName = user.username.length > 4 
+        ? user.username.substring(0, 2) + '****' + user.username.slice(-2)
+        : user.username.substring(0, 1) + '***';
+
       io.emit('productSold', {
         productId: updatedProduct._id,
         productName: updatedProduct.name,
-        newSoldCount: updatedProduct.soldCount
+        newSoldCount: updatedProduct.soldCount,
+        productImage: updatedProduct.image, // ส่งรูปไปด้วย
+        buyerName: buyerName,               // ชื่อคนซื้อแบบเซ็นเซอร์
+        time: new Date().toLocaleString('th-TH') // เวลาที่ซื้อ
       });
     }
 

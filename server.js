@@ -72,9 +72,13 @@ const userSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+// 🔥 อัปเดต Schema ให้รองรับสินค้าจาก 499K
 const productSchema = new mongoose.Schema({
   name: String, description: String, category: String, price: Number, badge: String, image: String,
-  soldCount: { type: Number, default: 0 } 
+  soldCount: { type: Number, default: 0 },
+  is499k: { type: Boolean, default: false }, // เช็คว่าเป็นของ 499K ไหม
+  apiProductId: { type: String, default: null }, // ID จาก 499K
+  apiStock: { type: Number, default: 0 } // จำนวนสต็อกที่เหลือใน 499K
 });
 
 const refillSchema = new mongoose.Schema({
@@ -299,6 +303,7 @@ app.get('/api/auth/profile', verifyToken, async (req, res) => {
   res.json(user);
 });
 
+// 🔥 อัปเดตให้รองรับสต็อกของ 499K ด้วย
 app.get('/api/products', async (req, res) => {
   try {
     const products = await Product.find().lean(); 
@@ -308,6 +313,9 @@ app.get('/api/products', async (req, res) => {
       if (p.name.toUpperCase().includes('CMD')) {
         const stockCount = availableKeys.filter(k => k.productName === p.name).length;
         return { ...p, stock: stockCount }; 
+      }
+      if (p.is499k) {
+        return { ...p, stock: p.apiStock }; // แสดงสต็อกตรงๆ จาก 499K
       }
       return { ...p, stock: 'unlimited' };
     });
@@ -569,33 +577,66 @@ app.post('/api/admin/add-keys', verifyToken, verifyAdmin, async (req, res) => {
 });
 
 // ==========================================
-// 🎮 ระบบเชื่อมต่อ API 499K Network (Sandbox)
+// 🎮 ระบบเชื่อมต่อและซิงค์ API 499K Network (อัปเดตดึงข้อมูลเข้า DB)
 // ==========================================
-app.get('/api/499k/test-products', verifyToken, verifyAdmin, async (req, res) => {
+app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const apiKey = process.env.API_499K_KEY; // ดึงคีย์จาก Render
-    console.log("ใช้คีย์ในการเทสต์:", apiKey ? "มีคีย์แล้ว" : "ไม่พบคีย์!"); // แอบเช็คว่าคีย์มาไหม
-
-    const response = await fetch('https://store.499k-network.com/api/v1/products', { 
+    const response = await fetch('https://store.499k-network.com/api/v1/products?expand=steam', { 
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}` // ส่งคีย์ไปทักทาย
+        'Authorization': `Bearer ${process.env.API_499K_KEY}` 
       }
     });
 
     const data = await response.json();
     
-    // ไม่ว่าสถานะจะเป็น 200 (ผ่าน) หรืออื่นๆ (พัง) ให้ส่งกลับมาที่หน้าเว็บทั้งหมดเลย จะได้ดู Error ออก
-    res.json({ 
-      success: response.ok, 
-      status: response.status, 
-      data: data 
-    });
+    if (!response.ok || !data.success) {
+      return res.status(400).json({ success: false, message: '499K ฟ้องว่ามี Error', details: data });
+    }
+
+    let addedCount = 0;
+    let updatedCount = 0;
+
+    // ลูปดึงของจาก 499K ทีละชิ้นมาลงร้านเรา
+    for (const p of data.data.products) {
+      // 🤑 ตั้งราคาขาย (บวกกำไร 30%) 
+      // เช่น ของเขาขาย 100 บาท * 1.3 = เราจะขาย 130 บาทในเว็บเรา
+      const myPrice = Math.ceil(p.price * 1.3);
+
+      // เช็คว่ามีเกมนี้ในร้านเราหรือยัง
+      const existingProduct = await Product.findOne({ apiProductId: p.product_id });
+
+      if (existingProduct) {
+        // มีแล้ว -> อัปเดตราคา, สต็อก, รูป
+        existingProduct.price = myPrice;
+        existingProduct.image = p.image;
+        existingProduct.apiStock = p.stock;
+        await existingProduct.save();
+        updatedCount++;
+      } else {
+        // ยังไม่มี -> สร้างสินค้าใหม่
+        const newProduct = new Product({
+          name: p.name,
+          description: p.steam?.genres ? p.steam.genres.join(', ') : 'เกม PC แท้ (Offline)',
+          category: 'Steam Game',
+          price: myPrice,
+          badge: 'API 499K',
+          image: p.image,
+          is499k: true,
+          apiProductId: p.product_id,
+          apiStock: p.stock
+        });
+        await newProduct.save();
+        addedCount++;
+      }
+    }
+
+    res.json({ success: true, message: `ดึงของสำเร็จ! เพิ่มใหม่ ${addedCount} รายการ, อัปเดต ${updatedCount} รายการ` });
 
   } catch (err) {
-    console.error("499K API Error (Catch):", err);
-    res.status(500).json({ success: false, message: 'ระบบ Server ของเรายิงไปหา 499K ไม่สำเร็จ (พังกลางทาง)' });
+    console.error("499K Sync Error:", err);
+    res.status(500).json({ success: false, message: 'ระบบ Server พังตอนกำลังดูดของจาก 499K' });
   }
 });
 

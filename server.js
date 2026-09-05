@@ -573,25 +573,29 @@ app.post('/api/admin/add-keys', verifyToken, verifyAdmin, async (req, res) => {
 // ==========================================
 app.get('/api/499k/test-products', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const response = await fetch('https://store.499k-network.com/api-store/products', { 
+    const apiKey = process.env.API_499K_KEY; // ดึงคีย์จาก Render
+    console.log("ใช้คีย์ในการเทสต์:", apiKey ? "มีคีย์แล้ว" : "ไม่พบคีย์!"); // แอบเช็คว่าคีย์มาไหม
+
+    const response = await fetch('https://store.499k-network.com/api/v1/products', { 
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.API_499K_KEY}` 
+        'Authorization': `Bearer ${apiKey}` // ส่งคีย์ไปทักทาย
       }
     });
 
     const data = await response.json();
     
-    if (response.ok) {
-      res.json({ success: true, data: data });
-    } else {
-      res.status(400).json({ success: false, message: '499K ตอบกลับว่ามี Error', details: data });
-    }
+    // ไม่ว่าสถานะจะเป็น 200 (ผ่าน) หรืออื่นๆ (พัง) ให้ส่งกลับมาที่หน้าเว็บทั้งหมดเลย จะได้ดู Error ออก
+    res.json({ 
+      success: response.ok, 
+      status: response.status, 
+      data: data 
+    });
 
   } catch (err) {
-    console.error("499K API Error:", err);
-    res.status(500).json({ success: false, message: 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ 499K ได้' });
+    console.error("499K API Error (Catch):", err);
+    res.status(500).json({ success: false, message: 'ระบบ Server ของเรายิงไปหา 499K ไม่สำเร็จ (พังกลางทาง)' });
   }
 });
 

@@ -568,6 +568,33 @@ app.post('/api/admin/add-keys', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
+// ==========================================
+// 🎮 ระบบเชื่อมต่อ API 499K Network (Sandbox)
+// ==========================================
+app.get('/api/499k/test-products', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const response = await fetch('https://store.499k-network.com/api-store/products', { 
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.API_499K_KEY}` 
+      }
+    });
+
+    const data = await response.json();
+    
+    if (response.ok) {
+      res.json({ success: true, data: data });
+    } else {
+      res.status(400).json({ success: false, message: '499K ตอบกลับว่ามี Error', details: data });
+    }
+
+  } catch (err) {
+    console.error("499K API Error:", err);
+    res.status(500).json({ success: false, message: 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ 499K ได้' });
+  }
+});
+
 async function initializeData() {
   const count = await Product.countDocuments();
   if (count === 0) {

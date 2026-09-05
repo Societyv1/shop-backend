@@ -595,37 +595,50 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
       return res.status(400).json({ success: false, message: '499K ฟ้องว่ามี Error', details: data });
     }
 
+    // เซฟตี้ดักแครช: เผื่อ 499K ส่งข้อมูลมาแปลกๆ หรือไม่มี products
+    if (!data.data || !Array.isArray(data.data.products)) {
+      return res.status(400).json({ success: false, message: 'ข้อมูลจาก 499K ผิดรูปแบบ ไม่พบรายการสินค้า' });
+    }
+
     let addedCount = 0;
     let updatedCount = 0;
 
     // ลูปดึงของจาก 499K ทีละชิ้นมาลงร้านเรา
     for (const p of data.data.products) {
-      // 🤑 ตั้งราคาขาย (บวกกำไร 30%) 
-      // เช่น ของเขาขาย 100 บาท * 1.3 = เราจะขาย 130 บาทในเว็บเรา
-      const myPrice = Math.ceil(p.price * 1.3);
+      // เซฟตี้: จัดการราคาเผื่อได้ค่าเป็น Null
+      const rawPrice = parseFloat(p.price) || 0;
+      const myPrice = Math.ceil(rawPrice * 1.3) || 99; // บวกกำไร 30%
 
-      // เช็คว่ามีเกมนี้ในร้านเราหรือยัง
-      const existingProduct = await Product.findOne({ apiProductId: p.product_id });
+      // หาว่าเคยมีสินค้านี้ในร้านเราหรือยัง
+      const existingProduct = await Product.findOne({ apiProductId: String(p.product_id) });
 
       if (existingProduct) {
-        // มีแล้ว -> อัปเดตราคา, สต็อก, รูป
+        // อัปเดตของที่มีอยู่แล้ว
         existingProduct.price = myPrice;
-        existingProduct.image = p.image;
-        existingProduct.apiStock = p.stock;
+        existingProduct.image = p.image || '/images/5.jpg';
+        existingProduct.apiStock = parseInt(p.stock) || 0;
         await existingProduct.save();
         updatedCount++;
       } else {
-        // ยังไม่มี -> สร้างสินค้าใหม่
+        // เซฟตี้: จัดการ Description และหมวดหมู่
+        let desc = 'เกม PC แท้ (Offline)';
+        if (p.steam && Array.isArray(p.steam.genres)) {
+          desc = p.steam.genres.join(', ');
+        }
+        let cat = p.platform || 'API Game';
+        if (cat.toLowerCase() === 'steam') cat = 'Steam Game';
+
+        // สร้างสินค้าใหม่
         const newProduct = new Product({
-          name: p.name,
-          description: p.steam?.genres ? p.steam.genres.join(', ') : 'เกม PC แท้ (Offline)',
-          category: 'Steam Game',
+          name: p.name || 'ไม่มีชื่อสินค้า',
+          description: desc,
+          category: cat,
           price: myPrice,
           badge: 'API 499K',
-          image: p.image,
+          image: p.image || '/images/5.jpg',
           is499k: true,
-          apiProductId: p.product_id,
-          apiStock: p.stock
+          apiProductId: String(p.product_id),
+          apiStock: parseInt(p.stock) || 0
         });
         await newProduct.save();
         addedCount++;
@@ -636,7 +649,8 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
 
   } catch (err) {
     console.error("499K Sync Error:", err);
-    res.status(500).json({ success: false, message: 'ระบบ Server พังตอนกำลังดูดของจาก 499K' });
+    // ส่ง err.message กลับไปโชว์ที่ Alert ให้แอดมินรู้ชัดๆ ว่าพังบรรทัดไหน
+    res.status(500).json({ success: false, message: `ระบบพัง: ${err.message}` });
   }
 });
 

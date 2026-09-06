@@ -583,6 +583,35 @@ app.post('/api/admin/users/balance', verifyToken, verifyAdmin, async (req, res) 
   }
 });
 
+// ==========================================
+// 📊 API ดึงข้อมูลสถิติหน้าแอดมิน (จำนวนคน / ยอดขายรวม)
+// ==========================================
+app.get('/api/admin/stats', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const usersCount = await User.countDocuments();
+    const sales = await Order.aggregate([
+      { $match: { status: 'completed' } },
+      { $group: { _id: null, total: { $sum: '$price' } } }
+    ]);
+    const totalSales = sales.length > 0 ? sales[0].total : 0;
+    res.json({ usersCount, totalSales });
+  } catch (err) {
+    res.status(500).json({ message: 'Error loading stats' });
+  }
+});
+
+// ==========================================
+// 👥 API ดึงรายชื่อผู้ใช้งานทั้งหมด
+// ==========================================
+app.get('/api/admin/users', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const users = await User.find().select('-password').sort({ createdAt: -1 });
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ message: 'Error loading users' });
+  }
+});
+
 app.post('/api/admin/add-keys', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { productName, keysString } = req.body;

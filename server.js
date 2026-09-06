@@ -76,9 +76,10 @@ const userSchema = new mongoose.Schema({
 const productSchema = new mongoose.Schema({
   name: String, description: String, category: String, price: Number, badge: String, image: String,
   soldCount: { type: Number, default: 0 },
-  is499k: { type: Boolean, default: false }, // เช็คว่าเป็นของ 499K ไหม
-  apiProductId: { type: String, default: null }, // ID จาก 499K
-  apiStock: { type: Number, default: 0 } // จำนวนสต็อกที่เหลือใน 499K
+  is499k: { type: Boolean, default: false }, 
+  apiProductId: { type: String, default: null }, 
+  apiStock: { type: Number, default: 0 },
+  denuvo: { type: Boolean, default: false } // 🔥 เพิ่มบรรทัดนี้ไว้ดักเกมติด Denuvo
 });
 
 const refillSchema = new mongoose.Schema({
@@ -486,7 +487,18 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       });
 
       const apiData = await response.json();
+
+      // ถ้า 499K ฟ้องว่า Error
       if (!apiData.success) {
+        // 🔥 ดักเคสเงินทุนเราหมด
+        if (apiData.error?.code === 'INSUFFICIENT_BALANCE') {
+          // ทัก Discord ไปฟ้องบอส (เตอร์) ทันที
+          sendDiscordAlert("🚨 ฉุกเฉิน! เงินทุน 499K หมด!", `บอสครับ! ลูกค้าชื่อ ${user.username} พยายามซื้อ **${productName}** แต่เงินทุนในเว็บ 499K ไม่พอตัด!\n\n**รีบไปเติมเงินด่วนเลยครับ!**`, 16711680); 
+          // บอกลูกค้าแบบเนียนๆ (เงินในเว็บเรายังไม่ถูกหัก เพราะเราเขียนดักไว้ก่อนบรรทัดหักเงินแล้ว)
+          return res.status(400).json({ message: `ระบบขัดข้องชั่วคราว (แจ้งแอดมินแล้ว) กรุณาลองใหม่ภายหลัง` });
+        }
+        
+        // ถ้าพังเรื่องอื่น (เช่น ของหมด)
         return res.status(400).json({ message: `❌ 499K: ${apiData.error?.message || 'สั่งซื้อล้มเหลว'}` });
       }
 
@@ -629,22 +641,18 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
       const existingProduct = await Product.findOne({ apiProductId: String(p.product_id) });
 
       if (existingProduct) {
-        // อัปเดตของที่มีอยู่แล้ว
         existingProduct.price = myPrice;
         existingProduct.image = p.image || '/images/5.jpg';
         existingProduct.apiStock = parseInt(p.stock) || 0;
+        existingProduct.denuvo = p.denuvo || false; // 🔥 เพิ่มตรงนี้ (อัปเดตของเดิม)
         await existingProduct.save();
         updatedCount++;
       } else {
-        // เซฟตี้: จัดการ Description และหมวดหมู่
         let desc = 'เกม PC แท้ (Offline)';
-        if (p.steam && Array.isArray(p.steam.genres)) {
-          desc = p.steam.genres.join(', ');
-        }
+        if (p.steam && Array.isArray(p.steam.genres)) desc = p.steam.genres.join(', ');
         let cat = p.platform || 'API Game';
         if (cat.toLowerCase() === 'steam') cat = 'Steam Game';
 
-        // สร้างสินค้าใหม่
         const newProduct = new Product({
           name: p.name || 'ไม่มีชื่อสินค้า',
           description: desc,
@@ -654,7 +662,8 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
           image: p.image || '/images/5.jpg',
           is499k: true,
           apiProductId: String(p.product_id),
-          apiStock: parseInt(p.stock) || 0
+          apiStock: parseInt(p.stock) || 0,
+          denuvo: p.denuvo || false // 🔥 เพิ่มตรงนี้ (สร้างของใหม่)
         });
         await newProduct.save();
         addedCount++;

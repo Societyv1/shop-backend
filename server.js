@@ -461,77 +461,103 @@ app.get('/api/orders', verifyToken, async (req, res) => {
 
 app.post('/api/orders', verifyToken, async (req, res) => {
   try {
+    const crypto = require('crypto'); // เรียกใช้ crypto สำหรับสร้าง UUID แบบที่คู่มือ 499K แนะนำ
     const user = await User.findById(req.userId);
     const { productId, productName, price } = req.body; 
 
-    if (user.balance < price) return res.status(400).json({ message: 'ยอดเงินไม่พอ' });
+    // 1. เช็กเงินลูกค้าก่อนเลย
+    if (user.balance < price) return res.status(400).json({ message: 'ยอดเงินไม่พอ กรุณาเติมเงิน' });
+
+    // 2. ดึงข้อมูลสินค้าจากฐานข้อมูลเรา
+    let product = null;
+    if (productId) {
+      product = await Product.findById(productId);
+    } else if (productName) {
+      product = await Product.findOne({ name: productName });
+    }
+
+    if (!product) return res.status(404).json({ message: 'ไม่พบสินค้าในระบบ' });
 
     let assignedKey = null;
-    if (productName.toUpperCase().includes('CMD')) {
+
+    // 3. 🟢 แยกระบบ: ถ้าเป็นสินค้าจาก 499K
+    if (product.is499k) {
+      const refUUID = crypto.randomUUID(); // สร้างเลข ref ไม่ซ้ำกัน (กันการตัดเงินซ้ำ)
+
+      // ยิง API ไปสั่งซื้อและตัดเงินฝั่ง 499K
+      const response = await fetch('https://store.499k-network.com/api/v1/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.API_499K_KEY}`
+        },
+        body: JSON.stringify({
+          product_id: product.apiProductId,
+          ref: refUUID
+        })
+      });
+
+      const apiData = await response.json();
+
+      // ถ้า 499K ฟ้องว่า Error (เช่น สต็อกฝั่งนู้นหมด หรือเงินในร้านเราฝั่งนู้นไม่พอ)
+      if (!apiData.success) {
+        return res.status(400).json({ message: `❌ 499K: ${apiData.error?.message || 'สั่งซื้อล้มเหลว'}` });
+      }
+
+      // ถ้าสำเร็จ หยิบ ไอดี/รหัสผ่าน มาจัดฟอร์แมตเก็บไว้
+      const account = apiData.data.account;
+      assignedKey = `ID: ${account.username} | Pass: ${account.password}`;
+
+      // อัปเดตสต็อก 499K บนหน้าเว็บเรา (ลดลง 1)
+      product.apiStock = Math.max(0, product.apiStock - 1);
+
+    } 
+    // 🔵 แยกระบบ: ถ้าเป็นสินค้า CMD (ระบบเดิมของเตอร์)
+    else if (productName.toUpperCase().includes('CMD')) {
       const keyRecord = await Key.findOneAndUpdate({ productName: productName, isUsed: false }, { isUsed: true, usedBy: user.username }, { new: true });
       if (!keyRecord) return res.status(400).json({ message: '❌ คีย์หมดสต๊อก!' });
       assignedKey = keyRecord.keyText;
     }
 
+    // 4. หักเงินลูกค้าในฐานข้อมูลเรา
     user.balance -= price;
     await user.save();
 
+    // 5. บันทึกออเดอร์ให้ลูกค้า
     const order = new Order({ userId: user._id, productName, price, licenseKey: assignedKey, status: 'completed' });
     await order.save();
 
-    let updatedProduct = null;
-    if (productId) {
-      updatedProduct = await Product.findByIdAndUpdate(
-        productId, 
-        { $inc: { soldCount: 1 } },
-        { new: true }
-      );
-    } else if (productName) {
-      updatedProduct = await Product.findOneAndUpdate(
-        { name: productName }, 
-        { $inc: { soldCount: 1 } },
-        { new: true }
-      );
-    }
+    // 6. อัปเดตยอดขายของชิ้นนั้น
+    product.soldCount += 1;
+    await product.save();
 
-    if (updatedProduct) {
-      const buyerName = user.username.length > 4 
-        ? user.username.substring(0, 2) + '****' + user.username.slice(-2)
-        : user.username.substring(0, 1) + '***';
+    // 7. แจ้งเตือนคนซื้อของ (Socket.io)
+    const buyerName = user.username.length > 4 
+      ? user.username.substring(0, 2) + '****' + user.username.slice(-2)
+      : user.username.substring(0, 1) + '***';
 
-      io.emit('productSold', {
-        productId: updatedProduct._id,
-        productName: updatedProduct.name,
-        newSoldCount: updatedProduct.soldCount,
-        productImage: updatedProduct.image, 
-        buyerName: buyerName,               
-        time: new Date().toLocaleString('th-TH') 
-      });
-    }
+    io.emit('productSold', {
+      productId: product._id,
+      productName: product.name,
+      newSoldCount: product.soldCount,
+      productImage: product.image, 
+      buyerName: buyerName,               
+      time: new Date().toLocaleString('th-TH') 
+    });
 
+    // 8. ส่งแจ้งเตือนเข้า Discord แอดมิน
     let discordMsg = `**รหัสคำสั่งซื้อ:** \`#${order._id}\`\n**ผู้ซื้อ:** ${user.username}#${user.tag || '0000'}\n**สินค้า:** ${productName}\n**ราคา:** ฿${price.toFixed(2)}`;
     if (assignedKey) {
-      discordMsg += `\n**License Key:** \`${assignedKey}\``;
+      discordMsg += `\n**ข้อมูลจัดส่ง:** \`${assignedKey}\``;
     }
     sendDiscordAlert("🛒 ออเดอร์ใหม่เข้าแล้ว!", discordMsg, 16766720);
 
+    // ตอบกลับหน้าเว็บว่าสำเร็จ!
     res.json({ message: 'สั่งซื้อสำเร็จ', orderId: order._id, licenseKey: assignedKey, newBalance: user.balance });
-  } catch (err) { res.status(500).json({ message: 'เกิดข้อผิดพลาดในการสั่งซื้อ' }); }
-});
 
-app.get('/api/admin/stats', verifyToken, verifyAdmin, async (req, res) => {
-  const usersCount = await User.countDocuments();
-  const orders = await Order.find().sort({ createdAt: -1 }).limit(10);
-  const totalSales = await Order.aggregate([{ $group: { _id: null, total: { $sum: "$price" } } }]);
-  res.json({ usersCount, recentOrders: orders, totalSales: totalSales[0]?.total || 0 });
-});
-
-app.get('/api/admin/users', verifyToken, verifyAdmin, async (req, res) => {
-  try {
-    const users = await User.find().select('-password').sort({ createdAt: -1 });
-    res.json(users);
-  } catch (err) {
-    res.status(500).json({ message: 'ไม่สามารถโหลดข้อมูลผู้ใช้ได้' });
+  } catch (err) { 
+    console.error("Order Error:", err);
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการสั่งซื้อ' }); 
   }
 });
 

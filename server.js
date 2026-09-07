@@ -662,9 +662,10 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
 
     // ลูปดึงของจาก 499K ทีละชิ้นมาลงร้านเรา
     for (const p of data.data.products) {
-      // เซฟตี้: จัดการราคาเผื่อได้ค่าเป็น Null
-      const rawPrice = parseFloat(p.price) || 0;
-      const myPrice = Math.ceil(rawPrice * 1.3) || 99; // บวกกำไร 30%
+      // เซฟตี้: ดึงราคาทุนมา ถ้าAPIไม่ส่งมาให้ตีทุนเริ่มต้นที่ 15 บาท
+            const rawPrice = parseFloat(p.price) || 15;
+      // กำหนดสูตรราคาขายหน้าร้าน: เอาราคาทุน + กำไรที่อยากได้ (เช่น บวกเพิ่ม 15 บาท)
+            const myPrice = rawPrice + 15; // ถ้าทุน 15 บาท หน้าร้านจะขาย 30 บาท
 
       // หาว่าเคยมีสินค้านี้ในร้านเราหรือยัง
       const existingProduct = await Product.findOne({ apiProductId: String(p.product_id) });

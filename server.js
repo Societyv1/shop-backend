@@ -83,23 +83,6 @@ const productSchema = new mongoose.Schema({
   isPinned: { type: Boolean, default: false } // 🔥 เพิ่มฟิลด์นี้สำหรับปักหมุดเกมฮิต
 });
 
-// ==========================================
-// 📌 API สลับสถานะปักหมุดสินค้า (Pin/Unpin Product)
-// ==========================================
-app.post('/api/admin/products/:id/pin', verifyToken, verifyAdmin, async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
-    if (!product) return res.status(404).json({ message: 'ไม่พบสินค้า' });
-    
-    product.isPinned = !product.isPinned; // สลับสถานะ true/false
-    await product.save();
-    
-    res.json({ success: true, message: `อัปเดตสถานะปักหมุดของเกม ${product.name} สำเร็จ!`, isPinned: product.isPinned });
-  } catch (err) {
-    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการปักหมุด' });
-  }
-});
-
 const refillSchema = new mongoose.Schema({
   userId: mongoose.Schema.Types.ObjectId,
   amount: Number,
@@ -170,6 +153,20 @@ const verifyAdmin = async (req, res, next) => {
     res.status(500).json({ message: 'Error checking admin status' });
   }
 };
+
+app.post('/api/admin/products/:id/pin', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ message: 'ไม่พบสินค้า' });
+    
+    product.isPinned = !product.isPinned; // สลับสถานะ true/false
+    await product.save();
+    
+    res.json({ success: true, message: `อัปเดตสถานะปักหมุดของเกม ${product.name} สำเร็จ!`, isPinned: product.isPinned });
+  } catch (err) {
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการปักหมุด' });
+  }
+});
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',

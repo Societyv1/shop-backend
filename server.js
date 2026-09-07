@@ -664,12 +664,17 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
     // ลูปดึงของจาก 499K ทีละชิ้นมาลงร้านเรา
     for (const p of data.data.products) {
       // เซฟตี้: ดึงราคาทุนมา ถ้าAPIไม่ส่งมาให้ตีทุนเริ่มต้นที่ 15 บาท
-// กำหนดราคาขาย (สมมติสูตรเดิม: ทุน + กำไร 15 บาท)
+// กำหนดราคาขายเบื้องต้น (ทุน + กำไร 15 บาท)
       const rawPrice = parseFloat(p.price) || 15;
-      const myPrice = rawPrice + 15; 
+      let myPrice = rawPrice + 15; 
 
-      // 🔥 สร้างเงื่อนไขกำหนดป้ายกำกับโดยดูจาก "ราคา"
-      // ถ้าคำนวณแล้วราคาขายคือ 30 บาท ให้ขึ้นป้าย "ไอดีเช่า" นอกนั้น "STEAM OFFLINE"
+      // 🔥 ดักชื่อเกมเพื่อปรับราคาพิเศษ (เพิ่มชื่อเกมอื่นในอนาคตได้เลย)
+      if (p.name.toLowerCase().includes('subnautica')) {
+        myPrice = 40; // ตั้งราคาขายเป็น 40 บาท
+      }
+
+      // 🔥 กำหนดป้ายกำกับ (ถ้าราคา 30 = ไอดีเช่า, นอกนั้น = STEAM OFFLINE)
+      // พอ Subnautica ราคาเป็น 40 ป้ายจะกลายเป็น STEAM OFFLINE อัตโนมัติ!
       let customBadge = (myPrice === 30) ? 'ไอดีเช่า' : 'STEAM OFFLINE';
 
       // หาว่าเคยมีสินค้านี้ในร้านเราหรือยัง

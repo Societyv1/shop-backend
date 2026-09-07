@@ -667,7 +667,7 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
 // 1. ดึงราคาทุนมาจาก 499K
       const rawPrice = parseFloat(p.price) || 15;
       
-      // 2. เอาทุนมา "บวกกำไร" ก่อน! (สมมติทุน 90 + 15 = 105)
+      // 2. เอาทุนมา "บวกกำไร" ก่อน!
       let myPrice = rawPrice + 15; 
 
       // 3. ดักราคาเกมพิเศษ
@@ -676,8 +676,10 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
       }
 
       // 4. เอา "ราคาที่บวกกำไรแล้ว (myPrice)" มาปัดเศษขึ้น
-      // ถ้า myPrice เป็น 105 มันจะถูกปัดขึ้นเป็น 110 บาท
       myPrice = Math.ceil(myPrice / 10) * 10;
+
+      // 🔥 5. ต้องมีบรรทัดนี้ด้วยครับ! ระบบถึงจะรู้ว่า customBadge คืออะไร
+      let customBadge = (myPrice === 30) ? 'ไอดีเช่า' : 'STEAM OFFLINE';
 
       // หาว่าเคยมีสินค้านี้ในร้านเราหรือยัง
       const existingProduct = await Product.findOne({ apiProductId: String(p.product_id) });

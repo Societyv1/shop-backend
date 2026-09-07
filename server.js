@@ -664,21 +664,20 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
     // ลูปดึงของจาก 499K ทีละชิ้นมาลงร้านเรา
     for (const p of data.data.products) {
       // เซฟตี้: ดึงราคาทุนมา ถ้าAPIไม่ส่งมาให้ตีทุนเริ่มต้นที่ 15 บาท
-// 1. กำหนดราคาขายเบื้องต้น (ทุน + กำไร 15 บาท)
+// 1. ดึงราคาทุนมาจาก 499K
       const rawPrice = parseFloat(p.price) || 15;
+      
+      // 2. เอาทุนมา "บวกกำไร" ก่อน! (สมมติทุน 90 + 15 = 105)
       let myPrice = rawPrice + 15; 
 
-      // 2. ดักชื่อเกมเพื่อปรับราคาพิเศษ (ถ้ามี)
+      // 3. ดักราคาเกมพิเศษ
       if (p.name.toLowerCase().includes('subnautica')) {
         myPrice = 40; 
       }
 
-      // 🔥 3. ระบบปัดเศษให้ราคาดูสวย (ปัดขึ้นให้ลงท้ายด้วย 0 เสมอ)
+      // 4. เอา "ราคาที่บวกกำไรแล้ว (myPrice)" มาปัดเศษขึ้น
+      // ถ้า myPrice เป็น 105 มันจะถูกปัดขึ้นเป็น 110 บาท
       myPrice = Math.ceil(myPrice / 10) * 10;
-
-      // 4. กำหนดป้ายกำกับ 
-      // (ถ้าปัดเศษแล้ว ยังไงเกมเช่าที่เคยราคา 30 ก็ยังเป็น 30 อยู่ดี ป้ายก็ไม่เพี้ยนครับ)
-      let customBadge = (myPrice === 30) ? 'ไอดีเช่า' : 'STEAM OFFLINE';
 
       // หาว่าเคยมีสินค้านี้ในร้านเราหรือยัง
       const existingProduct = await Product.findOne({ apiProductId: String(p.product_id) });

@@ -72,14 +72,32 @@ const userSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
-// 🔥 อัปเดต Schema ให้รองรับสินค้าจาก 499K
+// 🔥 อัปเดต Product Schema ให้รองรับการปักหมุด
 const productSchema = new mongoose.Schema({
   name: String, description: String, category: String, price: Number, badge: String, image: String,
   soldCount: { type: Number, default: 0 },
   is499k: { type: Boolean, default: false }, 
   apiProductId: { type: String, default: null }, 
   apiStock: { type: Number, default: 0 },
-  denuvo: { type: Boolean, default: false } // 🔥 เพิ่มบรรทัดนี้ไว้ดักเกมติด Denuvo
+  denuvo: { type: Boolean, default: false },
+  isPinned: { type: Boolean, default: false } // 🔥 เพิ่มฟิลด์นี้สำหรับปักหมุดเกมฮิต
+});
+
+// ==========================================
+// 📌 API สลับสถานะปักหมุดสินค้า (Pin/Unpin Product)
+// ==========================================
+app.post('/api/admin/products/:id/pin', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ message: 'ไม่พบสินค้า' });
+    
+    product.isPinned = !product.isPinned; // สลับสถานะ true/false
+    await product.save();
+    
+    res.json({ success: true, message: `อัปเดตสถานะปักหมุดของเกม ${product.name} สำเร็จ!`, isPinned: product.isPinned });
+  } catch (err) {
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการปักหมุด' });
+  }
 });
 
 const refillSchema = new mongoose.Schema({

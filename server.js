@@ -193,6 +193,7 @@ async function seedDatabaseKeys() {
 }
 seedDatabaseKeys();
 
+// ในไฟล์ server.js หาฟังก์ชัน verifySlip แล้วแทนที่ด้วยโค้ดนี้ครับ
 async function verifySlip(imageBuffer, expectedAmount) {
   try {
     const { data, info } = await sharp(imageBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -207,24 +208,34 @@ async function verifySlip(imageBuffer, expectedAmount) {
     const result = await Tesseract.recognize(processedImageBuffer, 'tha+eng');
     let text = result.data.text.replace(/\s+/g, '').toLowerCase();
 
+    // เช็กชื่อบัญชี (ปรับชื่อ/นามสกุลให้ตรงกับบัญชีเตอร์ได้เลย)
     const isMySlip = text.includes("8515") || text.includes("อภิวรรธน์") || text.includes("ภู่ถาวร");
     if (!isMySlip) {
        return { success: false, message: '❌ สลิปนี้ไม่ได้โอนเข้าบัญชีของร้านค้า' };
     }
 
+    // 🔥 ส่วนสำคัญที่แก้ใหม่: พยายามหายอดเงินจากสลิปด้วย Regex ให้ฉลาดขึ้น
     let textForAmount = text.replace(/[Oo]/g, '0').replace(/[Ss]/g, '5').replace(/[lI|]/g, '1').replace(/,/g, '');
-    const matches = textForAmount.match(/\d+\.\d+|\d+/g) || [];
+    
+    // ดึงตัวเลขที่มีจุดทศนิยม (เช่น 30.00) หรือไม่มีก็ได้
+    const matches = textForAmount.match(/\d+\.\d{2}|\d+/g) || [];
     
     const targetAmount = parseFloat(expectedAmount);
-    const isAmountMatch = matches.some(num => parseFloat(num) === targetAmount);
+    
+    // ตรวจสอบว่าในสลิปมีตัวเลขที่ใกล้เคียงหรือตรงกับที่ลูกค้าระบุไหม (ยอมให้คลาดเคลื่อนนิดหน่อย)
+    const isAmountMatch = matches.some(num => {
+        const parsedNum = parseFloat(num);
+        return Math.abs(parsedNum - targetAmount) < 0.1; // ยอมรับความคลาดเคลื่อน 0.1 บาท
+    });
 
     if (isAmountMatch) {
       return { success: true, payload: qrCode.data, amount: targetAmount };
     } else {
-      return { success: false, message: `สลิปถูกต้อง แต่ยอดเงินไม่ตรงเป้าหมาย (${expectedAmount} บาท)` };
+      // 🔥 ถ้าหาไม่เจอจริงๆ หรือ AI อ่านพลาด ให้ลองแจ้งเตือน แต่ถ้าชัวร์ว่าเข้าบัญชีเรา อาจจะยอมให้ผ่าน (เปิดคอมเมนต์ไว้ถ้าอยากให้เข้มงวด)
+      return { success: false, message: `สลิปถูกต้องบัญชีร้าน แต่ยอดเงินไม่ตรงกับที่แจ้ง (${expectedAmount} บาท)` };
     }
   } catch (err) {
-    return { success: false, message: 'ระบบขัดข้อง โปรดลองใหม่อีกครั้ง' };
+    return { success: false, message: 'ระบบอ่านสลิปขัดข้อง โปรดลองรูปสลิปที่ชัดเจนขึ้น' };
   }
 }
 

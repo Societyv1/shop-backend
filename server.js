@@ -473,6 +473,41 @@ app.get('/api/user/promo-history', verifyToken, async (req, res) => {
   }
 });
 
+app.get('/api/products/:id/rental-rates', verifyToken, async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product || !product.apiProductId) return res.status(404).json({ message: 'ไม่พบสินค้า' });
+
+    const response = await fetch(`https://store.499k-network.com/api/v1/products/${product.apiProductId}/availability`, {
+      headers: { 'Authorization': `Bearer ${process.env.API_499K_KEY}` }
+    });
+    const data = await response.json();
+    
+    if (!data.success || !data.data || !data.data.accounts || data.data.accounts.length === 0) {
+       return res.status(400).json({ message: 'ไม่มีคิวเช่าว่างในขณะนี้' });
+    }
+
+    // ดึงราคาจากไอดีแรกที่ว่าง (เรทถูกสุด)
+    const rates = data.data.accounts[0].rates;
+    if (!rates) return res.status(400).json({ message: 'ไม่พบข้อมูลราคาเช่า' });
+
+    const myRates = [];
+    for (const [days, rateData] of Object.entries(rates)) {
+       const rawPrice = rateData.price;
+       let myPrice = rawPrice + 15; // 🔥 บวกกำไรให้ร้านเรา 15 บาท
+       myPrice = Math.ceil(myPrice / 10) * 10; // ปัดเศษขึ้นหลักสิบ
+       myRates.push({ days: parseInt(days), price: myPrice });
+    }
+    
+    // เรียงวันจากน้อยไปมาก
+    myRates.sort((a, b) => a.days - b.days);
+
+    res.json({ success: true, rates: myRates });
+  } catch (err) {
+    res.status(500).json({ message: 'ดึงราคาเช่าขัดข้อง' });
+  }
+});
+
 app.get('/api/orders', verifyToken, async (req, res) => {
   res.json(await Order.find({ userId: req.userId }).sort({ createdAt: -1 }));
 });
@@ -481,7 +516,7 @@ app.post('/api/orders', verifyToken, async (req, res) => {
   try {
     const crypto = require('crypto');
     const user = await User.findById(req.userId);
-    const { productId, productName, price } = req.body;
+    const { productId, productName, price, durationDays } = req.body;
 
     if (user.balance < price) return res.status(400).json({ message: 'ยอดเงินไม่พอ กรุณาเติมเงิน' });
 
@@ -494,35 +529,53 @@ app.post('/api/orders', verifyToken, async (req, res) => {
     let assignedKey = null;
     let apiOrderNo = null; // เตรียมตัวแปรไว้เก็บเลขจาก 499K
 
-    if (product.is499k) {
+   if (product.is499k) {
       const refUUID = crypto.randomUUID();
+      
+      // 🕒 เตรียมข้อมูลส่งให้ 499K
+      let payload499k = { product_id: product.apiProductId, ref: refUUID };
+      
+      // 🔥 ถ้ามีการส่ง durationDays มา แสดงว่าเป็น "ไอดีเช่า"
+      if (durationDays) {
+        payload499k.type = 'rental';
+        payload499k.duration_days = parseInt(durationDays);
+        
+        // ปัดเศษเวลาเป็นบล็อก 30 นาทีตามกฎของ 499K
+        const now = new Date();
+        now.setMinutes(now.getMinutes() >= 30 ? 30 : 0, 0, 0);
+        payload499k.start_at = now.toISOString();
+      }
+
       const response = await fetch('https://store.499k-network.com/api/v1/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.API_499K_KEY}` },
-        body: JSON.stringify({ product_id: product.apiProductId, ref: refUUID })
+        body: JSON.stringify(payload499k)
       });
 
       const apiData = await response.json();
 
-      // ถ้า 499K ฟ้องว่า Error
       if (!apiData.success) {
-        // 🔥 ดักเคสเงินทุนเราหมด
         if (apiData.error?.code === 'INSUFFICIENT_BALANCE') {
-          // ทัก Discord ไปฟ้องบอส (เตอร์) ทันที
-          sendDiscordAlert("🚨 ฉุกเฉิน! เงินทุน 499K หมด!", `บอสครับ! ลูกค้าชื่อ ${user.username} พยายามซื้อ **${productName}** แต่เงินทุนในเว็บ 499K ไม่พอตัด!\n\n**รีบไปเติมเงินด่วนเลยครับ!**`, 16711680); 
-          // บอกลูกค้าแบบเนียนๆ (เงินในเว็บเรายังไม่ถูกหัก เพราะเราเขียนดักไว้ก่อนบรรทัดหักเงินแล้ว)
+          sendDiscordAlert("🚨 ฉุกเฉิน! เงินทุน 499K หมด!", `บอสครับ! ลูกค้าชื่อ ${user.username} พยายามซื้อ **${productName}** แต่เงินทุนในเว็บ 499K ไม่พอตัด! รีบไปเติมเงินด่วน!`, 16711680); 
           return res.status(400).json({ message: `ระบบขัดข้องชั่วคราว (แจ้งแอดมินแล้ว) กรุณาลองใหม่ภายหลัง` });
         }
-        
-        // ถ้าพังเรื่องอื่น (เช่น ของหมด)
         return res.status(400).json({ message: `❌ 499K: ${apiData.error?.message || 'สั่งซื้อล้มเหลว'}` });
       }
 
       const account = apiData.data.account;
-      apiOrderNo = apiData.data.order_no; // ดึงเลข order_no มาเก็บไว้
-      assignedKey = `ID: ${account.username} | Pass: ${account.password}`;
+      apiOrderNo = apiData.data.order_no; 
+      
+      // 🔥 ดักเคสไอดีเช่าที่อาจจะยังไม่ส่ง User/Pass มาทันที
+      if (account) {
+        assignedKey = `ID: ${account.username} | Pass: ${account.password}`;
+      } else {
+        assignedKey = `ID: รอระบบ 499K จัดสรร (กำลังเตรียมไอดีเช่า ทักดิสคอร์ดแอดมินหากไม่ขึ้น)`;
+      }
+      
       product.apiStock = Math.max(0, product.apiStock - 1);
-    } else if (productName.toUpperCase().includes('CMD')) {
+    }
+    
+    else if (productName.toUpperCase().includes('CMD')) {
       const keyRecord = await Key.findOneAndUpdate({ productName: productName, isUsed: false }, { isUsed: true, usedBy: user.username }, { new: true });
       if (!keyRecord) return res.status(400).json({ message: '❌ คีย์หมดสต๊อก!' });
       assignedKey = keyRecord.keyText;

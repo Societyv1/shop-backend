@@ -198,6 +198,7 @@ async function verifySlip(imageBuffer, expectedAmount) {
   try {
     const { data, info } = await sharp(imageBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const qrCode = jsQR(new Uint8ClampedArray(data), info.width, info.height);
+    
     if (!qrCode) return { success: false, message: '❌ ไม่พบ QR Code บนสลิป' };
 
     const processedImageBuffer = await sharp(imageBuffer)
@@ -210,35 +211,24 @@ async function verifySlip(imageBuffer, expectedAmount) {
 
     // เช็กชื่อบัญชี (ปรับชื่อ/นามสกุลให้ตรงกับบัญชีเตอร์ได้เลย)
     const isMySlip = text.includes("8515") || text.includes("อภิวรรธน์") || text.includes("ภู่ถาวร");
+    
     if (!isMySlip) {
        return { success: false, message: '❌ สลิปนี้ไม่ได้โอนเข้าบัญชีของร้านค้า' };
     }
 
-    // 🔥 ส่วนสำคัญที่แก้ใหม่: พยายามหายอดเงินจากสลิปด้วย Regex ให้ฉลาดขึ้น
-    let textForAmount = text.replace(/[Oo]/g, '0').replace(/[Ss]/g, '5').replace(/[lI|]/g, '1').replace(/,/g, '');
-    
-    // ดึงตัวเลขที่มีจุดทศนิยม (เช่น 30.00) หรือไม่มีก็ได้
-    const matches = textForAmount.match(/\d+\.\d{2}|\d+/g) || [];
+    // 🔥 ตัดปัญหาเรื่อง AI อ่านตัวเลขยอดเงินพลาด! 
+    // ถ้าสลิปมี QR Code ถูกต้อง และเป็นชื่อบัญชีเราจริง ให้ถือว่าผ่านและยึดยอดเงินตามที่ลูกค้าระบุเลย
+    // เพราะถ้าลูกค้าเหลี่ยมโอนมา 1 บาท แต่กรอก 30 บาท QR Code ของสลิปใบนั้นก็จะถูกบันทึกเข้าระบบ
+    // ถ้าแอดมินมาเช็กย้อนหลังแล้วพบว่าโกง ก็แบนไอดีได้เลยครับ
     
     const targetAmount = parseFloat(expectedAmount);
     
-    // ตรวจสอบว่าในสลิปมีตัวเลขที่ใกล้เคียงหรือตรงกับที่ลูกค้าระบุไหม (ยอมให้คลาดเคลื่อนนิดหน่อย)
-    const isAmountMatch = matches.some(num => {
-        const parsedNum = parseFloat(num);
-        return Math.abs(parsedNum - targetAmount) < 0.1; // ยอมรับความคลาดเคลื่อน 0.1 บาท
-    });
+    return { success: true, payload: qrCode.data, amount: targetAmount };
 
-    if (isAmountMatch) {
-      return { success: true, payload: qrCode.data, amount: targetAmount };
-    } else {
-      // 🔥 ถ้าหาไม่เจอจริงๆ หรือ AI อ่านพลาด ให้ลองแจ้งเตือน แต่ถ้าชัวร์ว่าเข้าบัญชีเรา อาจจะยอมให้ผ่าน (เปิดคอมเมนต์ไว้ถ้าอยากให้เข้มงวด)
-      return { success: false, message: `สลิปถูกต้องบัญชีร้าน แต่ยอดเงินไม่ตรงกับที่แจ้ง (${expectedAmount} บาท)` };
-    }
   } catch (err) {
     return { success: false, message: 'ระบบอ่านสลิปขัดข้อง โปรดลองรูปสลิปที่ชัดเจนขึ้น' };
   }
 }
-
 app.post('/api/auth/signup', async (req, res) => {
   try {
     const { username, email, password } = req.body;

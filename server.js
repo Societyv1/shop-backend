@@ -664,20 +664,13 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
     // ลูปดึงของจาก 499K ทีละชิ้นมาลงร้านเรา
     for (const p of data.data.products) {
       // เซฟตี้: ดึงราคาทุนมา ถ้าAPIไม่ส่งมาให้ตีทุนเริ่มต้นที่ 15 บาท
-// กำหนดราคาขาย
+// กำหนดราคาขาย (สมมติสูตรเดิม: ทุน + กำไร 15 บาท)
       const rawPrice = parseFloat(p.price) || 15;
-      const myPrice = rawPrice + 15; // ตัวอย่างสูตรบวกกำไร 15 บาท
+      const myPrice = rawPrice + 15; 
 
-      // 🔥 สร้างเงื่อนไขกำหนดป้ายกำกับ (Badge) ให้ชัดเจน
-      let customBadge = 'API 499K';
-      
-      // สมมติว่าในข้อมูลจาก 499K (p) มีฟิลด์ที่บอกประเภทการขาย เช่น type: 'rent' หรือชื่อเกมมีคำว่า (เช่า)
-      // หรือถ้า 499K แยกประเภทชัดเจนไม่ได้ เราอาจจะต้องดักจากชื่อเกมหรือฟิลด์อื่นๆ 
-      if (p.name.includes('(เช่า)') || p.type === 'rent') {
-        customBadge = 'STEAM RENT'; // เกมเช่า
-      } else if (p.platform === 'steam' || p.category === 'Steam Game') {
-        customBadge = 'STEAM OFFLINE'; // เกม Steam ทั่วไป
-      }
+      // 🔥 สร้างเงื่อนไขกำหนดป้ายกำกับโดยดูจาก "ราคา"
+      // ถ้าคำนวณแล้วราคาขายคือ 30 บาท ให้ขึ้นป้าย "ไอดีเช่า" นอกนั้น "STEAM OFFLINE"
+      let customBadge = (myPrice === 30) ? 'ไอดีเช่า' : 'STEAM OFFLINE';
 
       // หาว่าเคยมีสินค้านี้ในร้านเราหรือยัง
       const existingProduct = await Product.findOne({ apiProductId: String(p.product_id) });
@@ -687,7 +680,7 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
         existingProduct.image = p.image || '/images/5.jpg';
         existingProduct.apiStock = parseInt(p.stock) || 0;
         existingProduct.denuvo = p.denuvo || false;
-        existingProduct.badge = customBadge; // 🔥 อัปเดตป้ายให้เกมเก่าด้วย
+        existingProduct.badge = customBadge; // 🔥 อัปเดตป้ายให้ตรงประเภท
         await existingProduct.save();
         updatedCount++;
       } else {
@@ -701,7 +694,7 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
           description: desc,
           category: cat,
           price: myPrice,
-          badge: customBadge, // 🔥 ใส่ป้ายใหม่ตรงนี้
+          badge: customBadge, // 🔥 ใส่ป้ายที่แยกประเภทแล้ว
           image: p.image || '/images/5.jpg',
           is499k: true,
           apiProductId: String(p.product_id),

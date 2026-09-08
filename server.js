@@ -493,13 +493,27 @@ app.get('/api/products/:id/rental-rates', verifyToken, async (req, res) => {
 
     const myRates = [];
     for (const [days, rateData] of Object.entries(rates)) {
-       const rawPrice = rateData.price;
-       let myPrice = rawPrice + 15; // 🔥 บวกกำไรให้ร้านเรา 15 บาท
-       myPrice = Math.ceil(myPrice / 10) * 10; // ปัดเศษขึ้นหลักสิบ
+       // 🔥 ใช้ web_price เป็นฐาน เพื่อไม่ให้ราคาเราต่ำกว่าหน้าร้าน 499K เด็ดขาด
+       const rawPrice = rateData.web_price || rateData.price; 
+       
+       // 🔥 สูตรบวกกำไรแบบ "ขั้นบันได" ป้องกันการขาดทุน
+       let profit = 15; // กำไรเริ่มต้น 15 บาท (สำหรับทุนต่ำกว่า 40)
+       
+       if (rawPrice >= 150) {
+           profit = 50; // ทุน 150+ (เช่น เช่า 15, 30 วัน) -> ขอบวกกำไร 50 บาท
+       } else if (rawPrice >= 80) {
+           profit = 30; // ทุน 80+ (เช่น เช่า 7 วัน) -> ขอบวกกำไร 30 บาท
+       } else if (rawPrice >= 40) {
+           profit = 20; // ทุน 40+ (เช่น เช่า 3 วัน) -> ขอบวกกำไร 20 บาท
+       }
+
+       let myPrice = rawPrice + profit;
+       myPrice = Math.ceil(myPrice / 10) * 10; // ปัดเศษขึ้นให้ลงท้ายด้วยเลข 0 (เช่น 115 ปัดเป็น 120)
+       
        myRates.push({ days: parseInt(days), price: myPrice });
     }
     
-    // เรียงวันจากน้อยไปมาก
+    // เรียงจำนวนวันจากน้อยไปมาก
     myRates.sort((a, b) => a.days - b.days);
 
     res.json({ success: true, rates: myRates });

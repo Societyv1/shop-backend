@@ -760,8 +760,11 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
       // 4. เอา "ราคาที่บวกกำไรแล้ว (myPrice)" มาปัดเศษขึ้น
       myPrice = Math.ceil(myPrice / 10) * 10;
 
-      // 🔥 5. ต้องมีบรรทัดนี้ด้วยครับ! ระบบถึงจะรู้ว่า customBadge คืออะไร
-      let customBadge = (myPrice === 30) ? 'ไอดีเช่า' : 'STEAM OFFLINE';
+      // 🔥 5. ดักจับป้ายกำกับ (Badge) ให้ชัวร์ว่าเป็นของเช่าจริงๆ จาก API
+      let customBadge = 'STEAM OFFLINE';
+      if (p.type === 'rental') {
+          customBadge = 'ไอดีเช่า';
+      }
 
       // หาว่าเคยมีสินค้านี้ในร้านเราหรือยัง
       const existingProduct = await Product.findOne({ apiProductId: String(p.product_id) });

@@ -475,6 +475,61 @@ app.get('/api/user/promo-history', verifyToken, async (req, res) => {
   }
 });
 
+app.get('/api/products/:id/rental-rates', verifyToken, async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product || !product.apiProductId) return res.status(404).json({ message: 'ไม่พบสินค้า' });
+
+    // ดึงข้อมูลความพร้อม (Availability) มาตรงๆ เพื่อเช็กเรทและเช็กคิวว่าง
+    const response = await fetch(`https://store.499k-network.com/api/v1/products/${product.apiProductId}/availability`, {
+      headers: { 'Authorization': `Bearer ${process.env.API_499K_KEY}` }
+    });
+    const data = await response.json();
+    
+    if (!data.success || !data.data || !data.data.accounts || data.data.accounts.length === 0) {
+       return res.status(400).json({ message: 'ไม่มีคิวเช่าว่างในขณะนี้' });
+    }
+
+    // เช็กว่ามีไอดีไหนว่างบ้างจากข้อมูล availability ที่ 499K ส่งมาตรงๆ เลย (ไม่ยิงสั่งซื้อทิพย์แล้ว)
+    const availableAccount = data.data.accounts.find(acc => {
+        if (acc.available === false || acc.available === 'false' || acc.status === 'rented') return false;
+        if (acc.available_at && new Date(acc.available_at) > new Date()) return false;
+        return true;
+    });
+
+    if (!availableAccount) {
+      return res.status(400).json({ message: 'คิวเช่าเต็มทั้งหมดในขณะนี้ โปรดรอคนอื่นหมดเวลาเช่า' });
+    }
+
+    const rates = availableAccount.rates;
+    if (!rates) return res.status(400).json({ message: 'ไม่พบข้อมูลราคาเช่า' });
+
+    const myRates = [];
+    for (const [days, rateData] of Object.entries(rates)) {
+       const rawPrice = rateData.web_price || rateData.price; 
+       let profit = 15; 
+       if (rawPrice >= 150) profit = 50; 
+       else if (rawPrice >= 80) profit = 30; 
+       else if (rawPrice >= 40) profit = 20; 
+
+       let myPrice = rawPrice + profit;
+       myPrice = Math.ceil(myPrice / 10) * 10; 
+       
+       myRates.push({ days: parseInt(days), price: myPrice });
+    }
+    
+    myRates.sort((a, b) => a.days - b.days);
+    res.json({ success: true, rates: myRates });
+
+  } catch (err) {
+    res.status(500).json({ message: 'ดึงราคาเช่าขัดข้อง' });
+  }
+});
+
+app.get('/api/orders', verifyToken, async (req, res) => {
+  res.json(await Order.find({ userId: req.userId }).sort({ createdAt: -1 }));
+});
+
 app.post('/api/orders', verifyToken, async (req, res) => {
   try {
     const crypto = require('crypto');
@@ -561,133 +616,6 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       status: 'completed',
       startAt: orderStartAt,
       expiresAt: orderExpiresAt
-    });
-    await order.save();
-
-    product.soldCount += 1;
-    await product.save();
-
-    const buyerName = user.username.length > 4 ? user.username.substring(0, 2) + '****' + user.username.slice(-2) : user.username.substring(0, 1) + '***';
-    io.emit('productSold', { productId: product._id, productName: product.name, newSoldCount: product.soldCount, productImage: product.image, buyerName: buyerName, time: new Date().toLocaleString('th-TH') });
-
-    let discordMsg = `**รหัสคำสั่งซื้อ:** \`#${order._id}\`\n**ผู้ซื้อ:** ${user.username}#${user.tag || '0000'}\n**สินค้า:** ${productName}\n**ราคา:** ฿${price.toFixed(2)}`;
-    if (assignedKey) discordMsg += `\n**ข้อมูลจัดส่ง:** \`${assignedKey}\``;
-    sendDiscordAlert("🛒 ออเดอร์ใหม่เข้าแล้ว!", discordMsg, 16766720);
-
-    res.json({ message: 'สั่งซื้อสำเร็จ', orderId: order._id, licenseKey: assignedKey, newBalance: user.balance });
-  } catch (err) {
-    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการสั่งซื้อ' });
-  }
-});
-
-app.get('/api/orders', verifyToken, async (req, res) => {
-  res.json(await Order.find({ userId: req.userId }).sort({ createdAt: -1 }));
-});
-
-app.post('/api/orders', verifyToken, async (req, res) => {
-  try {
-    const crypto = require('crypto');
-    const user = await User.findById(req.userId);
-    const { productId, productName, price, durationDays } = req.body;
-
-    if (user.balance < price) return res.status(400).json({ message: 'ยอดเงินไม่พอ กรุณาเติมเงิน' });
-
-    let product = null;
-    if (productId) product = await Product.findById(productId);
-    else if (productName) product = await Product.findOne({ name: productName });
-
-    if (!product) return res.status(404).json({ message: 'ไม่พบสินค้าในระบบ' });
-
-    let assignedKey = null;
-    let apiOrderNo = null; // เตรียมตัวแปรไว้เก็บเลขจาก 499K
-
-if (product.is499k) {
-      // 🔥 ด่านที่ 1: เช็กก่อนว่ามี "ไอดีว่าง" หรือไม่ (เฉพาะแบบเช่า)
-      if (durationDays) {
-        const checkRes = await fetch(`https://store.499k-network.com/api/v1/products/${product.apiProductId}/availability`, {
-          headers: { 'Authorization': `Bearer ${process.env.API_499K_KEY}` }
-        });
-        const checkData = await checkRes.json();
-        
-        // ถ้าไม่มีคิวว่างเลย ให้เด้งกลับ ไม่ต้องตัดเงิน
-        if (!checkData.success || !checkData.data || !checkData.data.accounts || checkData.data.accounts.length === 0) {
-           return res.status(400).json({ message: '❌ คิวเช่าเต็มแล้วในขณะนี้ โปรดลองใหม่ภายหลัง (ระบบไม่ได้หักเงิน)' });
-        }
-      }
-
-      const refUUID = crypto.randomUUID();
-      
-      // 🕒 เตรียมข้อมูลส่งให้ 499K
-      let payload499k = { product_id: product.apiProductId, ref: refUUID };
-      
-      // 🔥 ถ้ามีการส่ง durationDays มา แสดงว่าเป็น "ไอดีเช่า"
-      if (durationDays) {
-        payload499k.type = 'rental';
-        payload499k.duration_days = parseInt(durationDays);
-        
-        // ปัดเศษเวลาเป็นบล็อก 30 นาทีตามกฎของ 499K
-        const now = new Date();
-        now.setMinutes(now.getMinutes() >= 30 ? 30 : 0, 0, 0);
-        payload499k.start_at = now.toISOString();
-      }
-
-      // 🔥 ด่านที่ 2: ยิงสั่งซื้อจริง
-      const response = await fetch('https://store.499k-network.com/api/v1/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.API_499K_KEY}` },
-        body: JSON.stringify(payload499k)
-      });
-
-      const apiData = await response.json();
-
-      if (!apiData.success) {
-        if (apiData.error?.code === 'INSUFFICIENT_BALANCE') {
-          sendDiscordAlert("🚨 ฉุกเฉิน! เงินทุน 499K หมด!", `บอสครับ! ลูกค้าชื่อ ${user.username} พยายามซื้อ **${productName}** แต่เงินทุนในเว็บ 499K ไม่พอตัด! รีบไปเติมเงินด่วน!`, 16711680); 
-          return res.status(400).json({ message: `ระบบขัดข้องชั่วคราว (แจ้งแอดมินแล้ว) กรุณาลองใหม่ภายหลัง` });
-        }
-        return res.status(400).json({ message: `❌ 499K: ${apiData.error?.message || 'สั่งซื้อล้มเหลว (ระบบไม่ได้หักเงิน)'}` });
-      }
-
-      const account = apiData.data.account;
-      apiOrderNo = apiData.data.order_no; 
-
-      // 🔥 1. ดึงเวลาเริ่ม-หมดอายุจาก 499K มาเก็บไว้
-      let orderStartAt = null;
-      let orderExpiresAt = null;
-      if (apiData.data && apiData.data.start_at && apiData.data.end_at) {
-        orderStartAt = new Date(apiData.data.start_at);
-        orderExpiresAt = new Date(apiData.data.end_at);
-      }
-      
-      // ดักเคสไอดีเช่าที่อาจจะยังไม่ส่ง User/Pass มาทันที
-      if (account) {
-        assignedKey = `ID: ${account.username} | Pass: ${account.password}`;
-      } else {
-        assignedKey = `ID: รอระบบ 499K จัดสรร (กำลังเตรียมไอดีเช่า ทักดิสคอร์ดแอดมินหากไม่ขึ้น)`;
-      }
-      
-      product.apiStock = Math.max(0, product.apiStock - 1);
-    }
-    
-    else if (productName.toUpperCase().includes('CMD')) {
-      const keyRecord = await Key.findOneAndUpdate({ productName: productName, isUsed: false }, { isUsed: true, usedBy: user.username }, { new: true });
-      if (!keyRecord) return res.status(400).json({ message: '❌ คีย์หมดสต๊อก!' });
-      assignedKey = keyRecord.keyText;
-    }
-
-    user.balance -= price;
-    await user.save();
-
-    // 🔥 2. เอาเวลามาเซฟลงฐานข้อมูลของเรา
-    const order = new Order({ 
-      userId: user._id, 
-      productName, 
-      price, 
-      licenseKey: assignedKey, 
-      apiOrderNo: apiOrderNo, 
-      status: 'completed',
-      startAt: orderStartAt,   // 🔥 เซฟเวลาเริ่ม
-      expiresAt: orderExpiresAt // 🔥 เซฟเวลาหมดอายุ
     });
     await order.save();
 

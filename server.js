@@ -112,8 +112,10 @@ const announcementSchema = new mongoose.Schema({
 const orderSchema = new mongoose.Schema({
   userId: mongoose.Schema.Types.ObjectId,
   productName: String, price: Number, licenseKey: { type: String, default: null },
-  apiOrderNo: { type: String, default: null }, // 🔥 เพิ่มบรรทัดนี้ เพื่อจำรหัสออเดอร์จาก 499K
+  apiOrderNo: { type: String, default: null },
   status: { type: String, enum: ['pending', 'completed'], default: 'pending' },
+  startAt: { type: Date, default: null },   // 🔥 เพิ่มเวลาเริ่มเช่า
+  expiresAt: { type: Date, default: null }, // 🔥 เพิ่มเวลาหมดอายุ
   createdAt: { type: Date, default: Date.now }
 });
 
@@ -592,8 +594,16 @@ if (product.is499k) {
 
       const account = apiData.data.account;
       apiOrderNo = apiData.data.order_no; 
+
+      // 🔥 1. ดึงเวลาเริ่ม-หมดอายุจาก 499K มาเก็บไว้
+      let orderStartAt = null;
+      let orderExpiresAt = null;
+      if (apiData.data && apiData.data.start_at && apiData.data.end_at) {
+        orderStartAt = new Date(apiData.data.start_at);
+        orderExpiresAt = new Date(apiData.data.end_at);
+      }
       
-      // 🔥 ดักเคสไอดีเช่าที่อาจจะยังไม่ส่ง User/Pass มาทันที
+      // ดักเคสไอดีเช่าที่อาจจะยังไม่ส่ง User/Pass มาทันที
       if (account) {
         assignedKey = `ID: ${account.username} | Pass: ${account.password}`;
       } else {
@@ -612,8 +622,17 @@ if (product.is499k) {
     user.balance -= price;
     await user.save();
 
-    // บันทึก apiOrderNo ลงฐานข้อมูลเรา
-    const order = new Order({ userId: user._id, productName, price, licenseKey: assignedKey, apiOrderNo: apiOrderNo, status: 'completed' });
+    // 🔥 2. เอาเวลามาเซฟลงฐานข้อมูลของเรา
+    const order = new Order({ 
+      userId: user._id, 
+      productName, 
+      price, 
+      licenseKey: assignedKey, 
+      apiOrderNo: apiOrderNo, 
+      status: 'completed',
+      startAt: orderStartAt,   // 🔥 เซฟเวลาเริ่ม
+      expiresAt: orderExpiresAt // 🔥 เซฟเวลาหมดอายุ
+    });
     await order.save();
 
     product.soldCount += 1;

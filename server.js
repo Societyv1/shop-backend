@@ -743,10 +743,7 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
 
     const data = await response.json();
     
-    // 🔥 โค้ดสายลับ: ปริ้นท์ข้อมูลทุกอย่างที่ 499K ส่งมาลงหน้าจอดำ (Terminal)
-    console.log("==== ไส้ในบัญชีเกม " + product.name + " ====");
-    console.log(JSON.stringify(data.data.accounts, null, 2));
-    console.log("=================================");
+  
     
     if (!response.ok || !data.success) {
       return res.status(400).json({ success: false, message: '499K ฟ้องว่ามี Error', details: data });

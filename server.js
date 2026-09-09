@@ -485,37 +485,43 @@ app.get('/api/products/:id/rental-rates', verifyToken, async (req, res) => {
     });
     const data = await response.json();
     
+    // เซฟตี้ด่านแรก: โครงสร้างข้อมูลผิดพลาด หรือไม่มีแอคเคาท์ส่งมาเลย
     if (!data.success || !data.data || !data.data.accounts || data.data.accounts.length === 0) {
-       return res.status(400).json({ message: 'ไม่มีคิวเช่าว่างในขณะนี้' });
+       return res.status(400).json({ message: 'ไม่มีคิวเช่าว่างในขณะนี้ (เต็มทุกไอดี)' });
     }
 
-    // ดึงราคาจากไอดีแรกที่ว่าง (เรทถูกสุด)
-    const rates = data.data.accounts[0].rates;
+    // 🔥 ด่านที่ 2 (สำคัญมาก!): เช็กว่ามีไอดีที่ "ว่างจริงๆ (available = true)" หรือไม่
+    // หาไอดีที่ว่าง (available: true) 
+    const availableAccount = data.data.accounts.find(acc => acc.available === true);
+
+    if (!availableAccount) {
+      // ถ้าหาไม่เจอไอดีที่ว่างเลย แปลว่าตอนนี้ติดคิวคนอื่นเล่นอยู่ทั้งหมด
+      return res.status(400).json({ message: 'คิวเช่าเต็มทั้งหมดในขณะนี้ โปรดรอคนอื่นหมดเวลาเช่า' });
+    }
+
+    // ถ้ามีไอดีว่าง ให้ดึงราคาจากไอดีที่ว่างนั้นมาคำนวณ
+    const rates = availableAccount.rates;
     if (!rates) return res.status(400).json({ message: 'ไม่พบข้อมูลราคาเช่า' });
 
     const myRates = [];
     for (const [days, rateData] of Object.entries(rates)) {
-       // 🔥 ใช้ web_price เป็นฐาน เพื่อไม่ให้ราคาเราต่ำกว่าหน้าร้าน 499K เด็ดขาด
        const rawPrice = rateData.web_price || rateData.price; 
        
-       // 🔥 สูตรบวกกำไรแบบ "ขั้นบันได" ป้องกันการขาดทุน
-       let profit = 15; // กำไรเริ่มต้น 15 บาท (สำหรับทุนต่ำกว่า 40)
-       
+       let profit = 15; 
        if (rawPrice >= 150) {
-           profit = 50; // ทุน 150+ (เช่น เช่า 15, 30 วัน) -> ขอบวกกำไร 50 บาท
+           profit = 50; 
        } else if (rawPrice >= 80) {
-           profit = 30; // ทุน 80+ (เช่น เช่า 7 วัน) -> ขอบวกกำไร 30 บาท
+           profit = 30; 
        } else if (rawPrice >= 40) {
-           profit = 20; // ทุน 40+ (เช่น เช่า 3 วัน) -> ขอบวกกำไร 20 บาท
+           profit = 20; 
        }
 
        let myPrice = rawPrice + profit;
-       myPrice = Math.ceil(myPrice / 10) * 10; // ปัดเศษขึ้นให้ลงท้ายด้วยเลข 0 (เช่น 115 ปัดเป็น 120)
+       myPrice = Math.ceil(myPrice / 10) * 10; 
        
        myRates.push({ days: parseInt(days), price: myPrice });
     }
     
-    // เรียงจำนวนวันจากน้อยไปมาก
     myRates.sort((a, b) => a.days - b.days);
 
     res.json({ success: true, rates: myRates });

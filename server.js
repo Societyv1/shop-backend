@@ -478,28 +478,93 @@ app.get('/api/user/promo-history', verifyToken, async (req, res) => {
 app.get('/api/products/:id/rental-rates', verifyToken, async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
-    const response = await fetch(`https://store.499k-network.com/api/v1/products/${product.apiProductId}/availability`, {
+    if (!product || !product.apiProductId) return res.status(404).json({ message: 'ไม่พบสินค้า' });
+
+    // 1. ดึง Availability ปกติมาก่อนเพื่อหาราคา (เพราะ 499K ส่งราคามาให้ตลอดอยู่แล้ว)
+    const availabilityRes = await fetch(`https://store.499k-network.com/api/v1/products/${product.apiProductId}/availability`, {
       headers: { 'Authorization': `Bearer ${process.env.API_499K_KEY}` }
     });
-    const data = await response.json();
+    const availabilityData = await availabilityRes.json();
     
-    // 🔥 โหมดสายลับ: สกัดข้อมูลดิบของไอดีแรกมาโชว์หน้าเว็บตรงๆ เลย!
-    if (data.data && data.data.accounts && data.data.accounts.length > 0) {
-        const acc = data.data.accounts[0];
-        
-        // ดึงสถานะทุกอย่างที่ไม่ได้ซ้อนกันลึกๆ ออกมาโชว์ให้หมด
-        const debugText = Object.keys(acc)
-            .filter(k => typeof acc[k] !== 'object')
-            .map(k => `${k}: ${acc[k]}`)
-            .join(' | ');
-            
-        // บังคับให้เด้ง Error สีแดงเพื่อโชว์ข้อมูล
-        return res.status(400).json({ message: `ข้อมูล 499K: ${debugText}` });
+    if (!availabilityData.success || !availabilityData.data || !availabilityData.data.accounts || availabilityData.data.accounts.length === 0) {
+       return res.status(400).json({ message: 'ไม่มีข้อมูลจาก 499K' });
     }
 
-    return res.status(400).json({ message: `ข้อมูลแม่: ${JSON.stringify(data).substring(0, 100)}...` });
+    // 2. เตรียมข้อมูลราคาไว้ก่อน
+    const account = availabilityData.data.accounts[0]; // ดึงบัญชีแรกมาใช้เป็นฐานราคา
+    const rates = account.rates;
+    if (!rates) return res.status(400).json({ message: 'ไม่พบข้อมูลราคาเช่า' });
+
+    const myRates = [];
+    for (const [days, rateData] of Object.entries(rates)) {
+       const rawPrice = rateData.web_price || rateData.price; 
+       let profit = 15; 
+       if (rawPrice >= 150) profit = 50; 
+       else if (rawPrice >= 80) profit = 30; 
+       else if (rawPrice >= 40) profit = 20; 
+
+       let myPrice = rawPrice + profit;
+       myPrice = Math.ceil(myPrice / 10) * 10; 
+       
+       myRates.push({ days: parseInt(days), price: myPrice });
+    }
+    myRates.sort((a, b) => a.days - b.days);
+
+    // 🔥 3. ไม้ตาย: ทดลองสร้าง "ออเดอร์ทิพย์" ไปยัง 499K เพื่อเช็กว่ามันยอมให้ซื้อจริงๆ มั้ย
+    const crypto = require('crypto');
+    const mockRefUUID = crypto.randomUUID();
+    let payload499k = { 
+        product_id: product.apiProductId, 
+        ref: mockRefUUID,
+        type: 'rental',
+        duration_days: myRates[0].days // ทดลองส่งจำนวนวันแรกไปเช็ก
+    };
+    
+    // ตั้งเวลาล่วงหน้า 30 นาที
+    const mockNow = new Date();
+    mockNow.setMinutes(mockNow.getMinutes() >= 30 ? 30 : 0, 0, 0);
+    payload499k.start_at = mockNow.toISOString();
+
+    const orderCheckRes = await fetch('https://store.499k-network.com/api/v1/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.API_499K_KEY}` },
+        body: JSON.stringify(payload499k)
+    });
+
+    const orderCheckData = await orderCheckRes.json();
+
+    // 4. วิเคราะห์ผลจากการทดลองสร้างออเดอร์
+    if (!orderCheckData.success) {
+        // ถ้าไม่ success ให้เช็ก error code
+        if (orderCheckData.error?.code === 'ACCOUNT_NOT_AVAILABLE' || orderCheckData.error?.code === 'OUT_OF_STOCK') {
+             // ถ้าระบบบอกว่า account ไม่ว่าง หรือของหมด ก็คือคิวเต็ม!
+             return res.status(400).json({ message: 'คิวเช่าเต็มทั้งหมดในขณะนี้ โปรดรอคนอื่นหมดเวลาเช่า' });
+        }
+        
+        // ถ้าเงินทุนเราหมดจริงๆ ให้ส่ง error กลับไป
+        if (orderCheckData.error?.code === 'INSUFFICIENT_BALANCE') {
+             return res.status(400).json({ message: `ระบบ 499K เงินทุนไม่พอ กรุณาแจ้งแอดมิน` });
+        }
+        
+        // Error อื่นๆ จาก 499K
+        return res.status(400).json({ message: `499K: ${orderCheckData.error?.message || 'ไม่สามารถเช็กคิวได้'}` });
+    }
+
+    // 5. ถ้าระบบยอดให้ทำรายการ (ออเดอร์ทิพย์สำเร็จ) แสดงว่า "ว่างจริง!" 
+    // เราต้องรีบ "ยกเลิก" ออเดอร์นั้นทันที เพื่อคืนคิวให้ระบบ
+    if (orderCheckData.data && orderCheckData.data.order_no) {
+        await fetch(`https://store.499k-network.com/api/v1/orders/${orderCheckData.data.order_no}`, {
+            method: 'DELETE', // เปลี่ยนเป็น PUT/POST หรือ endpoint สำหรับยกเลิกออเดอร์ตามคู่มือ 499K ถ้ามี
+            headers: { 'Authorization': `Bearer ${process.env.API_499K_KEY}` }
+        }).catch(e => console.error("Cancel mock order failed:", e));
+    }
+
+    // ส่งข้อมูลราคากลับไปให้หน้าเว็บโชว์ Popup
+    res.json({ success: true, rates: myRates });
+
   } catch (err) {
-    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการดึงข้อมูล' });
+    console.error(err);
+    res.status(500).json({ message: 'เซิร์ฟเวอร์ขัดข้อง' });
   }
 });
 

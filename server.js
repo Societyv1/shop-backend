@@ -543,7 +543,20 @@ app.post('/api/orders', verifyToken, async (req, res) => {
     let assignedKey = null;
     let apiOrderNo = null; // เตรียมตัวแปรไว้เก็บเลขจาก 499K
 
-   if (product.is499k) {
+if (product.is499k) {
+      // 🔥 ด่านที่ 1: เช็กก่อนว่ามี "ไอดีว่าง" หรือไม่ (เฉพาะแบบเช่า)
+      if (durationDays) {
+        const checkRes = await fetch(`https://store.499k-network.com/api/v1/products/${product.apiProductId}/availability`, {
+          headers: { 'Authorization': `Bearer ${process.env.API_499K_KEY}` }
+        });
+        const checkData = await checkRes.json();
+        
+        // ถ้าไม่มีคิวว่างเลย ให้เด้งกลับ ไม่ต้องตัดเงิน
+        if (!checkData.success || !checkData.data || !checkData.data.accounts || checkData.data.accounts.length === 0) {
+           return res.status(400).json({ message: '❌ คิวเช่าเต็มแล้วในขณะนี้ โปรดลองใหม่ภายหลัง (ระบบไม่ได้หักเงิน)' });
+        }
+      }
+
       const refUUID = crypto.randomUUID();
       
       // 🕒 เตรียมข้อมูลส่งให้ 499K
@@ -560,6 +573,7 @@ app.post('/api/orders', verifyToken, async (req, res) => {
         payload499k.start_at = now.toISOString();
       }
 
+      // 🔥 ด่านที่ 2: ยิงสั่งซื้อจริง
       const response = await fetch('https://store.499k-network.com/api/v1/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.API_499K_KEY}` },
@@ -573,7 +587,7 @@ app.post('/api/orders', verifyToken, async (req, res) => {
           sendDiscordAlert("🚨 ฉุกเฉิน! เงินทุน 499K หมด!", `บอสครับ! ลูกค้าชื่อ ${user.username} พยายามซื้อ **${productName}** แต่เงินทุนในเว็บ 499K ไม่พอตัด! รีบไปเติมเงินด่วน!`, 16711680); 
           return res.status(400).json({ message: `ระบบขัดข้องชั่วคราว (แจ้งแอดมินแล้ว) กรุณาลองใหม่ภายหลัง` });
         }
-        return res.status(400).json({ message: `❌ 499K: ${apiData.error?.message || 'สั่งซื้อล้มเหลว'}` });
+        return res.status(400).json({ message: `❌ 499K: ${apiData.error?.message || 'สั่งซื้อล้มเหลว (ระบบไม่ได้หักเงิน)'}` });
       }
 
       const account = apiData.data.account;

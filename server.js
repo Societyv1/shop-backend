@@ -485,25 +485,46 @@ app.get('/api/products/:id/rental-rates', verifyToken, async (req, res) => {
     });
     const data = await response.json();
     
-    // เซฟตี้ด่าน 1: เช็กว่ามีข้อมูลส่งมาไหม
+    // เซฟตี้ด่านที่ 1: ตรวจสอบข้อมูลว่าส่งมาปกติไหม
     if (!data.success || !data.data) {
-       return res.status(400).json({ message: 'ไม่มีข้อมูลจาก 499K' });
+       return res.status(400).json({ message: 'ไม่มีข้อมูลตอบกลับจาก 499K' });
     }
 
-    // 🔥 ด่าน 2 (จุดตายของ 499K): เช็กสถานะ available ระดับหน้าสุดของข้อมูล
-    // ถ้า 499K ประกาศชัดเจนว่า available เป็น false คือจบเลย คิวเต็ม!
+    // 🔥 ด่านที่ 2 (ดักจับแบบเหมาเข่งหน้าสุด): ถ้าตัวแม่บอกว่า false คือจบเกม เต็มทั้งหมด!
     if (data.data.available === false || data.data.available === 'false' || data.data.available === 0) {
        return res.status(400).json({ message: 'คิวเช่าเต็มทั้งหมดในขณะนี้ โปรดรอคนอื่นหมดเวลาเช่า' });
     }
 
-    // เซฟตี้ด่าน 3: เช็กว่ามีไอดีให้ดึงราคาไหม
+    // เซฟตี้ด่านที่ 3: ตรวจสอบว่ามีข้อมูลรายไอดี (accounts) ส่งมาไหม
     if (!data.data.accounts || data.data.accounts.length === 0) {
        return res.status(400).json({ message: 'ไม่มีคิวเช่าว่างในขณะนี้ (ไม่มีไอดีในระบบ)' });
     }
 
-    // ผ่านด่านมาได้แปลว่าว่างชัวร์! ดึงราคาจากไอดีแรกมาคำนวณโชว์ใน Popup เลย
-    const rates = data.data.accounts[0].rates;
-    if (!rates) return res.status(400).json({ message: 'ไม่พบข้อมูลราคาเช่า' });
+    // 🔥 ด่านที่ 4 (ตัวกรองขั้นสุดยอด): สแกนเจาะลึกทะลุไปในทุกๆ ไอดี ว่ามีอันไหนว่าง "จริงๆ" บ้าง!
+    const availableAccount = data.data.accounts.find(acc => {
+        // 1. ถ้ามีฟิลด์ไหนสักฟิลด์บอกว่า "ไม่ว่าง" (rented, false) ปัดทิ้ง!
+        if (acc.available === false || acc.available === 'false' || acc.status === 'rented') {
+            return false;
+        }
+        // 2. ถ้ามีเวลาระบุไว้ว่า "จะว่างตอนไหน" แปลว่าตอนนี้คนเล่นอยู่ ปัดทิ้ง!
+        if (acc.available_at && new Date(acc.available_at) > new Date()) {
+            return false;
+        }
+        // 3. ถ้าไม่มีอัตราค่าเช่าส่งมา ก็ถือว่าไอดีพัง ปัดทิ้ง!
+        if (!acc.rates || Object.keys(acc.rates).length === 0) {
+            return false;
+        }
+        // ถ้าไม่เข้าเงื่อนไขใดเลย = ว่างของแท้ 100%!
+        return true;
+    });
+
+    // ถ้าทะลุด่าน 4 มาแล้วยังไม่เจอไอดีที่รอดชีวิตเลย = คิวเต็มทั้งหมด!
+    if (!availableAccount) {
+      return res.status(400).json({ message: 'คิวเช่าเต็มทั้งหมดในขณะนี้ โปรดรอคนอื่นหมดเวลาเช่า' });
+    }
+
+    // ผ่านมาได้ แปลว่าว่างชัวร์ๆ ล้านเปอร์เซ็นต์ ดึงราคาจากไอดีที่รอดชีวิตนั้นมาใช้เลย
+    const rates = availableAccount.rates;
 
     const myRates = [];
     for (const [days, rateData] of Object.entries(rates)) {

@@ -487,19 +487,29 @@ app.get('/api/products/:id/rental-rates', verifyToken, async (req, res) => {
     
     // เซฟตี้ด่านแรก: โครงสร้างข้อมูลผิดพลาด หรือไม่มีแอคเคาท์ส่งมาเลย
     if (!data.success || !data.data || !data.data.accounts || data.data.accounts.length === 0) {
-       return res.status(400).json({ message: 'ไม่มีคิวเช่าว่างในขณะนี้ (เต็มทุกไอดี)' });
+       return res.status(400).json({ message: 'ไม่มีคิวเช่าว่างในขณะนี้ (ไม่มีข้อมูลในโกดัง)' });
     }
 
-    // 🔥 ด่านที่ 2 (สำคัญมาก!): เช็กว่ามีไอดีที่ "ว่างจริงๆ (available = true)" หรือไม่
-    // หาไอดีที่ว่าง (available: true) 
-    const availableAccount = data.data.accounts.find(acc => acc.available === true);
+    // 🔥 ด่านที่ 2 (สำคัญมาก!): สแกนหาไอดีที่ "ว่างจริงๆ" จากทั้งหมดที่มี (สมมุติมี 10 ไอดี มันจะเช็กทีละอัน)
+    const availableAccount = data.data.accounts.find(acc => {
+        // 1. ถ้า API ระบุชัดเจนว่าติดคิว (false / rented) -> ปัดตก ไปเช็กไอดีถัดไป
+        if (acc.available === false || acc.available === 'false' || acc.available === 0 || acc.status === 'rented' || acc.status === 'busy') {
+            return false;
+        }
+        // 2. ถ้ามีเวลาระบุว่าว่างวันไหน (และเวลานั้นยังมาไม่ถึง แปลว่าคนอื่นเล่นอยู่) -> ปัดตก ไปเช็กไอดีถัดไป
+        if (acc.available_at && new Date(acc.available_at) > new Date()) {
+            return false;
+        }
+        // 3. ถ้ารอดเงื่อนไขด้านบนมาได้ แปลว่า "ไอดีนี้ว่าง!" -> ดึงไอดีนี้มาใช้เลย
+        return true;
+    });
 
     if (!availableAccount) {
-      // ถ้าหาไม่เจอไอดีที่ว่างเลย แปลว่าตอนนี้ติดคิวคนอื่นเล่นอยู่ทั้งหมด
-      return res.status(400).json({ message: 'คิวเช่าเต็มทั้งหมดในขณะนี้ โปรดรอคนอื่นหมดเวลาเช่า' });
+      // ถ้าลูปเช็กจนครบทุกไอดีในโกดังแล้ว ไม่มีไอดีไหนรอดมาได้เลย (คิวเต็มหมดเกลี้ยง!)
+      return res.status(400).json({ message: '❌ คิวเช่าเต็มทั้งหมดในขณะนี้ โปรดรอคนอื่นหมดเวลาเช่า' });
     }
 
-    // ถ้ามีไอดีว่าง ให้ดึงราคาจากไอดีที่ว่างนั้นมาคำนวณ
+    // ถ้าเจอไอดีว่าง ให้ดึงราคาจากไอดีที่ว่างนั้นมาแสดง
     const rates = availableAccount.rates;
     if (!rates) return res.status(400).json({ message: 'ไม่พบข้อมูลราคาเช่า' });
 

@@ -45,7 +45,7 @@ async function sendDiscordAlert(title, description, color) {
 
 app.use(cors({
   origin: '*', 
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
@@ -72,15 +72,21 @@ const userSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
-// 🔥 อัปเดต Product Schema ให้รองรับการปักหมุด
+// 🔥 Product Schema รองรับการปักหมุด และล็อคราคาที่แอดมินกำหนดเอง
 const productSchema = new mongoose.Schema({
-  name: String, description: String, category: String, price: Number, badge: String, image: String,
+  name: String, 
+  description: String, 
+  category: String, 
+  price: Number, 
+  badge: String, 
+  image: String,
   soldCount: { type: Number, default: 0 },
   is499k: { type: Boolean, default: false }, 
   apiProductId: { type: String, default: null }, 
   apiStock: { type: Number, default: 0 },
   denuvo: { type: Boolean, default: false },
-  isPinned: { type: Boolean, default: false } // 🔥 เพิ่มฟิลด์นี้สำหรับปักหมุดเกมฮิต
+  isPinned: { type: Boolean, default: false }, // สำหรับปักหมุดเกมฮิต
+  isCustomPrice: { type: Boolean, default: false } // ป้องกัน sync-499k เขียนทับราคาที่แอดมินปรับเอง
 });
 
 const refillSchema = new mongoose.Schema({
@@ -343,6 +349,194 @@ app.get('/api/products', async (req, res) => {
     res.json(productsWithStock);
   } catch (err) { res.status(500).json({ message: 'Error loading products' }); }
 });
+
+// ==========================================
+// 📦 จัดการสินค้า (Product Management - ปรับราคา / แก้ไข / ลบสินค้า)
+// ==========================================
+
+// 📌 ดึงข้อมูลสินค้ารายชิ้น (พร้อมคำนวณ Stock)
+app.get('/api/products/:id', async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id).lean();
+    if (!product) return res.status(404).json({ message: 'ไม่พบสินค้า' });
+
+    if (product.name && product.name.toUpperCase().includes('CMD')) {
+      const stockCount = await Key.countDocuments({ productName: product.name, isUsed: false });
+      product.stock = stockCount;
+    } else if (product.is499k) {
+      product.stock = product.apiStock;
+    } else {
+      product.stock = 'unlimited';
+    }
+
+    res.json(product);
+  } catch (err) {
+    if (err.name === 'CastError') return res.status(400).json({ message: 'รหัสสินค้า (Product ID) ไม่ถูกต้อง' });
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการดึงข้อมูลสินค้า' });
+  }
+});
+
+// 📌 ปรับเปลี่ยนราคาสินค้าโดยเฉพาะ (Admin)
+const handleUpdateProductPrice = async (req, res) => {
+  try {
+    const rawPrice = req.body.price !== undefined ? req.body.price : req.body.newPrice;
+    if (rawPrice === undefined || isNaN(parseFloat(rawPrice)) || parseFloat(rawPrice) < 0) {
+      return res.status(400).json({ message: 'กรุณาระบุราคาที่ถูกต้อง (ต้องเป็นตัวเลขและไม่ต่ำกว่า 0)' });
+    }
+
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ message: 'ไม่พบสินค้า' });
+
+    const oldPrice = product.price;
+    product.price = parseFloat(rawPrice);
+    product.isCustomPrice = true; // ล็อคราคาไว้ ไม่ให้ sync-499k เขียนทับอัตโนมัติ
+    await product.save();
+
+    sendDiscordAlert("🏷️ มีการเปลี่ยนราคาสินค้า!", `**สินค้า:** ${product.name}\n**ราคาเดิม:** ฿${oldPrice}\n**ราคาใหม่:** ฿${product.price}`, 3447003);
+    io.emit('productPriceUpdated', { productId: product._id, name: product.name, oldPrice, newPrice: product.price });
+    io.emit('productUpdated', product);
+
+    res.json({
+      success: true,
+      message: `ปรับราคา ${product.name} จาก ฿${oldPrice} เป็น ฿${product.price} สำเร็จ!`,
+      oldPrice,
+      newPrice: product.price,
+      product
+    });
+  } catch (err) {
+    if (err.name === 'CastError') return res.status(400).json({ message: 'รหัสสินค้า (Product ID) ไม่ถูกต้อง' });
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการปรับเปลี่ยนราคา: ' + err.message });
+  }
+};
+app.put('/api/admin/products/:id/price', verifyToken, verifyAdmin, handleUpdateProductPrice);
+app.patch('/api/admin/products/:id/price', verifyToken, verifyAdmin, handleUpdateProductPrice);
+app.post('/api/admin/products/:id/price', verifyToken, verifyAdmin, handleUpdateProductPrice);
+
+// 📌 อัปเดตข้อมูลสินค้าทั้งหมด / รายฟิลด์ รวมถึงราคา (Admin)
+const handleUpdateProduct = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ message: 'ไม่พบสินค้า' });
+
+    const { name, description, category, price, newPrice, badge, image, apiStock, isPinned, denuvo, is499k } = req.body;
+
+    const targetPrice = price !== undefined ? price : newPrice;
+    let priceChanged = false;
+    let oldPrice = product.price;
+
+    if (targetPrice !== undefined) {
+      if (isNaN(parseFloat(targetPrice)) || parseFloat(targetPrice) < 0) {
+        return res.status(400).json({ message: 'กรุณากรอกราคาที่ถูกต้อง (ต้องเป็นตัวเลขและไม่ต่ำกว่า 0)' });
+      }
+      product.price = parseFloat(targetPrice);
+      product.isCustomPrice = true;
+      priceChanged = true;
+    }
+
+    if (name !== undefined) product.name = name.trim();
+    if (description !== undefined) product.description = description;
+    if (category !== undefined) product.category = category;
+    if (badge !== undefined) product.badge = badge;
+    if (image !== undefined) product.image = image;
+    if (apiStock !== undefined) product.apiStock = parseInt(apiStock) || 0;
+    if (isPinned !== undefined) product.isPinned = Boolean(isPinned);
+    if (denuvo !== undefined) product.denuvo = Boolean(denuvo);
+    if (is499k !== undefined) product.is499k = Boolean(is499k);
+
+    await product.save();
+
+    let alertDesc = `**สินค้า:** ${product.name}\n**ราคา:** ฿${product.price}`;
+    if (priceChanged) alertDesc += ` *(เดิม ฿${oldPrice})*`;
+    sendDiscordAlert("✏️ มีการแก้ไขข้อมูลสินค้า!", alertDesc, 3447003);
+
+    io.emit('productUpdated', product);
+    if (priceChanged) {
+      io.emit('productPriceUpdated', { productId: product._id, name: product.name, oldPrice, newPrice: product.price });
+    }
+
+    res.json({
+      success: true,
+      message: `อัปเดตข้อมูลสินค้า ${product.name} สำเร็จ!`,
+      product
+    });
+  } catch (err) {
+    if (err.name === 'CastError') return res.status(400).json({ message: 'รหัสสินค้า (Product ID) ไม่ถูกต้อง' });
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการอัปเดตสินค้า: ' + err.message });
+  }
+};
+app.put('/api/admin/products/:id', verifyToken, verifyAdmin, handleUpdateProduct);
+app.patch('/api/admin/products/:id', verifyToken, verifyAdmin, handleUpdateProduct);
+app.put('/api/products/:id', verifyToken, verifyAdmin, handleUpdateProduct);
+app.patch('/api/products/:id', verifyToken, verifyAdmin, handleUpdateProduct);
+
+// 📌 ลบสินค้าออกจากระบบ (Admin)
+const handleDeleteProduct = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ message: 'ไม่พบสินค้าที่ต้องการลบ' });
+
+    await Product.findByIdAndDelete(req.params.id);
+
+    sendDiscordAlert("🗑️ ลบสินค้าออกจากระบบ!", `**สินค้า:** ${product.name}\n**หมวดหมู่:** ${product.category || '-'}\n**ราคาเดิม:** ฿${product.price}`, 15158332);
+    io.emit('productDeleted', { productId: product._id, name: product.name });
+
+    res.json({
+      success: true,
+      message: `ลบสินค้า ${product.name} ออกจากระบบเรียบร้อยแล้ว!`,
+      deletedId: req.params.id,
+      deletedProduct: {
+        _id: product._id,
+        name: product.name
+      }
+    });
+  } catch (err) {
+    if (err.name === 'CastError') return res.status(400).json({ message: 'รหัสสินค้า (Product ID) ไม่ถูกต้อง' });
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการลบสินค้า: ' + err.message });
+  }
+};
+app.delete('/api/admin/products/:id', verifyToken, verifyAdmin, handleDeleteProduct);
+app.delete('/api/products/:id', verifyToken, verifyAdmin, handleDeleteProduct);
+app.post('/api/admin/products/:id/delete', verifyToken, verifyAdmin, handleDeleteProduct);
+
+// 📌 เพิ่มสินค้าใหม่เข้าระบบ (Admin)
+const handleCreateProduct = async (req, res) => {
+  try {
+    const { name, description, category, price, badge, image, isPinned, is499k, apiProductId, apiStock, denuvo } = req.body;
+    if (!name || price === undefined || isNaN(parseFloat(price)) || parseFloat(price) < 0) {
+      return res.status(400).json({ message: 'กรุณากรอกชื่อสินค้าและราคาที่ถูกต้อง (ต้องเป็นตัวเลขและไม่ต่ำกว่า 0)' });
+    }
+
+    const newProduct = new Product({
+      name: name.trim(),
+      description: description || '',
+      category: category || 'ทั่วไป',
+      price: parseFloat(price),
+      badge: badge || '',
+      image: image || '/images/5.jpg',
+      isPinned: Boolean(isPinned),
+      is499k: Boolean(is499k),
+      apiProductId: apiProductId || null,
+      apiStock: parseInt(apiStock) || 0,
+      denuvo: Boolean(denuvo),
+      isCustomPrice: true
+    });
+
+    await newProduct.save();
+
+    sendDiscordAlert("✨ เพิ่มสินค้าใหม่เข้าร้าน!", `**สินค้า:** ${newProduct.name}\n**หมวดหมู่:** ${newProduct.category}\n**ราคา:** ฿${newProduct.price}`, 65280);
+    io.emit('productCreated', newProduct);
+
+    res.status(201).json({
+      success: true,
+      message: `เพิ่มสินค้า ${newProduct.name} เรียบร้อยแล้ว!`,
+      product: newProduct
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการเพิ่มสินค้า: ' + err.message });
+  }
+};
+app.post('/api/admin/products', verifyToken, verifyAdmin, handleCreateProduct);
+app.post('/api/products', verifyToken, verifyAdmin, handleCreateProduct);
 
 app.post('/api/refill/generate-qr', verifyToken, async (req, res) => {
   try {
@@ -789,7 +983,10 @@ app.post('/api/admin/sync-499k', verifyToken, verifyAdmin, async (req, res) => {
       const existingProduct = await Product.findOne({ apiProductId: String(p.product_id) });
 
       if (existingProduct) {
-        existingProduct.price = myPrice;
+        // อัปเดตราคาเฉพาะกรณีที่แอดมินไม่ได้กำหนดราคาเองไว้
+        if (!existingProduct.isCustomPrice) {
+          existingProduct.price = myPrice;
+        }
         existingProduct.image = p.image || '/images/5.jpg';
         existingProduct.apiStock = parseInt(p.stock) || 0;
         existingProduct.denuvo = p.denuvo || false;
